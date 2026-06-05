@@ -1,5 +1,7 @@
 # PRD: ABS Audio — KOReader Plugin for PocketBook Era Color
 
+This PRD is based on /Users/alex/Projects/scripting/koreader-plugins/absaudio.koplugin/docs/spec/absaudio-plugin-spec.md
+
 ## Problem Statement
 
 I own a self-hosted Audiobookshelf (ABS) server with ~220 audiobooks (primarily single-file M4B). I listen on my phone via the official ABS app, but I want to also listen on my PocketBook Era Color e-reader — which has color display, touchscreen, and built-in audio playback capability. There is no existing KOReader plugin that can browse an ABS server, download audiobooks, play them on-device, and sync playback position back to ABS so progress is consistent across devices.
