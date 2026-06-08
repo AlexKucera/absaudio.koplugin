@@ -34,6 +34,11 @@ local error_handler = require("error_handler")
 -- Try to load manifest and api
 local has_manifest, manifest = pcall(require, "manifest")
 local has_api, api = pcall(require, "api")
+local has_library_browser, library_browser = pcall(require, "absaudio/library_browser")
+if not has_library_browser then
+    -- Use print() so it always shows in crash.log / stdout
+    print("[ABS-DEBUG] library_browser load FAILED: " .. tostring(library_browser))
+end
 
 local dashboard = {}
 
@@ -441,15 +446,65 @@ end
 
 function DashboardView:_onBrowseLibrary()
     abs_logger.info("Browse Library tapped")
-    -- Stub — library browser in slice 3
+    print("[ABS-DEBUG] has_library_browser=" .. tostring(has_library_browser))
     if not has_api or not api.is_configured() then
         error_handler.show("auth", "Configure your server settings first.")
         return
     end
-    UIManager:show(InfoMessage:new{
-        text = _("Library browser coming soon.\nThis will show your ABS library with search, sort, and pagination."),
-        timeout = 3,
+    if not has_library_browser then
+        UIManager:show(InfoMessage:new{
+            text = _("Library browser not available."),
+            timeout = 3,
+        })
+        return
+    end
+
+    -- Capture settings callback and self before anything else
+    local settings_cb = _on_settings
+    local dashboard_view = self
+
+    print("[ABS-DEBUG] calling library_browser.show()...")
+    library_browser.show({
+        on_back = function()
+            dashboard.show({ on_settings = settings_cb })
+        end,
+        on_book_tap = function(item)
+            local has_book_detail, book_detail = pcall(require, "absaudio/book_detail")
+            if has_book_detail then
+                book_detail.show(item, {
+                    on_back = function()
+                        library_browser.show({
+                            on_back = function()
+                                dashboard.show({ on_settings = settings_cb })
+                            end,
+                            on_book_tap = function(i)
+                                book_detail.show(i, {
+                                    on_back = function()
+                                        library_browser.show({
+                                            on_back = function()
+                                                dashboard.show({ on_settings = settings_cb })
+                                            end,
+                                        })
+                                    end,
+                                })
+                            end,
+                        })
+                    end,
+                })
+            else
+                UIManager:show(InfoMessage:new{
+                    text = _("Book details coming soon."),
+                    timeout = 3,
+                })
+            end
+        end,
     })
+    print("[ABS-DEBUG] library_browser.show() returned, scheduling dashboard close")
+
+    -- Close dashboard AFTER library_browser.show() has set up
+    UIManager:scheduleIn(0.05, function()
+        UIManager:close(dashboard_view)
+    end)
 end
 
 function DashboardView:_onOpenSettings()

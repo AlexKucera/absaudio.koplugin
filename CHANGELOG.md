@@ -6,7 +6,14 @@ All notable changes to this project will be documented in this file. The format 
 
 ### feat
 
+- **cover-cache:** add cover art fetch and local JPEG cache module with hasCachedCover/fetchAndCache API
+- **library-store:** add data layer with client-side search, 6 sort modes, and pagination (25/page) over cached ABS items
+- **library-browser:** add fullscreen scrollable book list with cover thumbnails, sort cycling, search dialog, and load-more pagination
+- **book-detail:** add fullscreen book detail view with cover art, metadata, audio/ebook files with preferred format highlighting, tappable chapter list, download status badge, and offline manifest fallback
+- **dashboard:** wire Browse Library button to library browser → book detail navigation flow
+- **api:** fix api.init() never being called — add initialization at plugin startup and after settings save
 - **plugin:** register with KOReader menu system as "ABS Audio" with dispatcher actions
+
 - **config:** add LuaSettings-backed config manager with typed access, defaults, and URL validation
 - **settings:** add MultiInputDialog with 5 fields (server URL, API token, download dir, preferred format, log level)
 - **settings:** validate credentials against ABS server via `GET /api/libraries` on save
@@ -26,3 +33,5 @@ All notable changes to this project will be documented in this file. The format 
 - **logger:** 7 unit tests for level filtering, delegation, and suppression
 - **error-handler:** 20 unit tests for error mapping, HTTP status codes, and nil-safety
 - **manifest:** 7 unit tests for CRUD operations, file status, and position tracking
+- **cover-cache:** 6 unit tests for init, getCoverPath, hasCachedCover, fetchAndCache with mock file system
+- **library-store:** 20 unit tests for fetchAll, pagination, search (title/author), 6 sort modes, getCurrentSort/setSort

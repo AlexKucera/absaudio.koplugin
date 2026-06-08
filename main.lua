@@ -32,6 +32,13 @@ function ABSAudio:init()
     -- Initialize config from LuaSettings
     config.init()
 
+    -- Initialize API client if configured
+    local has_api, api = pcall(require, "api")
+    if has_api and config.is_configured() then
+        api.init(config.get("server"), config.get("token"))
+        abs_logger.verbose("API client initialized for " .. tostring(config.get("server")))
+    end
+
     -- Register menu items (appears in KOReader's plugin menu)
     self.ui.menu:registerToMainMenu(self)
 
@@ -225,6 +232,12 @@ function ABSAudio:onSaveSettings(fields)
             config.set("preferred_format", preferred_format)
             config.set("log_level", log_level)
             config.get_settings():flush()
+
+            -- Re-initialize API client with new credentials
+            local has_api_mod, api_mod = pcall(require, "api")
+            if has_api_mod then
+                api_mod.init(server_url, token)
+            end
 
             -- Update logger level
             abs_logger.set_level(log_level)
