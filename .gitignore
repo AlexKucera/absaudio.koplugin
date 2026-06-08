@@ -43,3 +43,6 @@ luac.out
 .pi/improvements.db
 
 docs/.DS_Store
+
+.claude/
+.DS_Store
