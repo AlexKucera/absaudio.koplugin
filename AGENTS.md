@@ -1,7 +1,7 @@
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **absaudio.koplugin** (179 symbols, 170 relationships, 0 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **absaudio.koplugin** (197 symbols, 188 relationships, 0 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -41,3 +41,16 @@ This project is indexed by GitNexus as **absaudio.koplugin** (179 symbols, 170 r
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
 
 <!-- gitnexus:end -->
+
+## Session Logs
+
+Session logs are written to `docs/devlog/` after each completed task, issue fix, or milestone.
+They capture what was done, decisions & rationale, gotchas & fixes, and next steps. Before starting a new session, read the previous session logs.
+
+<!-- write-log: session-log-index -->
+
+| Date | Type | File | Summary |
+|------|------|------|----------|
+| 2026-06-08 | issue | [issue02-slice1-emulator-testing_log.md](docs/devlog/20260608-issue02-slice1-plugin-scaffold-emulator-testing_log.md) | Re-ran Issue #2 with emulator testing; fixed _meta.lua deprecation, set up kodev emulator, verified plugin loads cleanly |
+
+<!-- write-log: session-log-index-end -->
