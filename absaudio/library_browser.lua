@@ -373,8 +373,9 @@ function LibraryBrowserView:_addBookRow(item)
     end
 
     -- Text info: title, author, duration
-    local title_str = item.title or _("Unknown Title")
-    local author_str = item.author or ""
+    local title_str = library_store.getItemTitle(item)
+    if title_str == "" then title_str = _("Unknown Title") end
+    local author_str = library_store.getItemAuthor(item)
     local duration_str = ""
     if item.media and item.media.duration and item.media.duration > 0 then
         duration_str = format_duration(item.media.duration)
@@ -441,13 +442,6 @@ function LibraryBrowserView:_addBookRow(item)
     row_container[1] = row_content
 
     table.insert(self.content_group, row_container)
-
-    -- Background fetch cover if not cached
-    if has_cover_cache and not cover_path then
-        UIManager:scheduleIn(0.5, function()
-            cover_cache.fetchAndCache(item.id)
-        end)
-    end
 end
 
 ------------------------------------------------------------------------
@@ -666,6 +660,11 @@ function browser.show(callbacks)
         print("[ABS-BROWSER] showing view...")
         UIManager:show(_view)
         print("[ABS-BROWSER] view shown!")
+
+        -- Schedule batch cover fetch + refresh for current page
+        if has_cover_cache then
+            browser._scheduleCoverFetch()
+        end
     end)
 
     if not ok then
@@ -675,6 +674,31 @@ function browser.show(callbacks)
             timeout = 5,
         })
     end
+end
+
+------------------------------------------------------------------------
+-- Batch cover fetch for current page items
+------------------------------------------------------------------------
+function browser._scheduleCoverFetch()
+    UIManager:scheduleIn(1, function()
+        if not _view then return end
+        local result = library_store.getItems({
+            page = _current_page,
+            per_page = _per_page,
+            search = _search_query ~= "" and _search_query or nil,
+        })
+        local fetched_any = false
+        for _, item in ipairs(result.items) do
+            if not cover_cache.hasCachedCover(item.id) then
+                local ok = cover_cache.fetchAndCache(item.id)
+                if ok then fetched_any = true end
+            end
+        end
+        -- Refresh view to show newly cached covers
+        if fetched_any and _view then
+            _view:_refresh()
+        end
+    end)
 end
 
 return browser

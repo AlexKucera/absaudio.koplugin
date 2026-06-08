@@ -26,6 +26,25 @@ local SORT_MODES = {
     "recently_played",
 }
 
+------------------------------------------------------------------------
+-- Helpers: extract title/author from ABS API response shape
+-- ABS returns: item.media.metadata.title, item.media.metadata.authorName
+-- Fallback: item.title, item.author (for test compat / edge cases)
+------------------------------------------------------------------------
+local function _get_item_title(item)
+    if item.media and item.media.metadata and item.media.metadata.title then
+        return item.media.metadata.title
+    end
+    return item.title or ""
+end
+
+local function _get_item_author(item)
+    if item.media and item.media.metadata and item.media.metadata.authorName then
+        return item.media.metadata.authorName
+    end
+    return item.author or ""
+end
+
 local DEFAULT_PER_PAGE = 25
 local DEFAULT_SORT = "title_asc"
 
@@ -99,8 +118,8 @@ local function filter_items(items, query)
     local lower_query = query:lower()
     local filtered = {}
     for _, item in ipairs(items) do
-        local title = (item.title or ""):lower()
-        local author = (item.author or ""):lower()
+        local title = _get_item_title(item):lower()
+        local author = _get_item_author(item):lower()
         if title:find(lower_query, 1, true) or author:find(lower_query, 1, true) then
             table.insert(filtered, item)
         end
@@ -114,19 +133,19 @@ end
 local function sort_items(items, sort_key)
     if sort_key == "title_asc" then
         table.sort(items, function(a, b)
-            return (a.title or ""):lower() < (b.title or ""):lower()
+            return _get_item_title(a):lower() < _get_item_title(b):lower()
         end)
     elseif sort_key == "title_desc" then
         table.sort(items, function(a, b)
-            return (a.title or ""):lower() > (b.title or ""):lower()
+            return _get_item_title(a):lower() > _get_item_title(b):lower()
         end)
     elseif sort_key == "author_asc" then
         table.sort(items, function(a, b)
-            return (a.author or ""):lower() < (b.author or ""):lower()
+            return _get_item_author(a):lower() < _get_item_author(b):lower()
         end)
     elseif sort_key == "author_desc" then
         table.sort(items, function(a, b)
-            return (a.author or ""):lower() > (b.author or ""):lower()
+            return _get_item_author(a):lower() > _get_item_author(b):lower()
         end)
     elseif sort_key == "recently_added" then
         table.sort(items, function(a, b)
@@ -183,6 +202,20 @@ function library_store.getItems(opts)
         total_pages = total_pages,
         total_items = total_items,
     }
+end
+
+--- Get item title from nested metadata (handles both API and flat shapes)
+-- @param item table  ABS library item
+-- @return string
+function library_store.getItemTitle(item)
+    return _get_item_title(item)
+end
+
+--- Get item author from nested metadata (handles both API and flat shapes)
+-- @param item table  ABS library item
+-- @return string
+function library_store.getItemAuthor(item)
+    return _get_item_author(item)
 end
 
 return library_store

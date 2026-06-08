@@ -55,7 +55,7 @@ package.loaded["lfs"] = mock_file_system
 local mock_api = {
     _cover_sink = nil,
     _cover_ok = true,
-    getCover = function(self, item_id, sink)
+    getCover = function(item_id, sink)
         mock_api._cover_sink = sink
         if mock_api._cover_ok then
             return true, 200
@@ -130,7 +130,7 @@ run_test("fetchAndCache creates directory and fetches cover from API", function(
     cover_cache.init(test_dir)
 
     local original_getCover = mock_api.getCover
-    mock_api.getCover = function(self, item_id, sink)
+    mock_api.getCover = function(item_id, sink)
         sink("fake jpeg data")
         return true, 200
     end
@@ -173,7 +173,7 @@ run_test("fetchAndCache returns false on API failure", function()
     end
 
     local original_getCover = mock_api.getCover
-    mock_api.getCover = function(self, item_id, sink)
+    mock_api.getCover = function(item_id, sink)
         return false, {type = "network", message = "connection failed"}
     end
 
@@ -205,6 +205,35 @@ run_test("fetchAndCache skips fetch if cover already cached", function()
     mock.assert_equals(api_called, false, "should NOT call API when cached")
 
     mock_api.getCover = original_getCover
+end)
+
+-- ============================================================
+-- Test: fetchAndCache creates nested directories recursively
+-- ============================================================
+run_test("fetchAndCache creates nested directories recursively", function()
+    local nested_dir = "/tmp/test-nested/a/b/c"
+    cover_cache.init(nested_dir)
+
+    mock_api.getCover = function(item_id, sink)
+        sink("nested jpeg data")
+        return true, 200
+    end
+
+    local original_io_open = io.open
+    io.open = function(path, mode)
+        return {
+            write = function(self, data) end,
+            close = function(self) end,
+        }
+    end
+
+    local ok, path = cover_cache.fetchAndCache("item_nested")
+    mock.assert_equals(ok, true, "fetchAndCache should succeed with nested dir")
+    mock.assert_equals(mock_file_system._mkdir_called["/tmp/test-nested"], true, "should create parent dir")
+    mock.assert_equals(mock_file_system._mkdir_called["/tmp/test-nested/a"], true, "should create mid dir")
+    mock.assert_equals(mock_file_system._mkdir_called[nested_dir], true, "should create leaf dir")
+
+    io.open = original_io_open
 end)
 
 -- ============================================================

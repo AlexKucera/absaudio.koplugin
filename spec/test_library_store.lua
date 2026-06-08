@@ -46,20 +46,28 @@ local errors = {}
 local SAMPLE_ITEMS = {
     {
         id = "li_aaa",
-        title = "Alpha Book",
-        author = "Zoe Author",
         mediaType = "book",
         addedAt = 1000,
-        media = { duration = 3600 },
+        media = {
+            duration = 3600,
+            metadata = {
+                title = "Alpha Book",
+                authorName = "Zoe Author",
+            },
+        },
         userMediaProgress = nil,
     },
     {
         id = "li_bbb",
-        title = "Beta Book",
-        author = "Amy Writer",
         mediaType = "book",
         addedAt = 3000,
-        media = { duration = 7200 },
+        media = {
+            duration = 7200,
+            metadata = {
+                title = "Beta Book",
+                authorName = "Amy Writer",
+            },
+        },
         userMediaProgress = {
             currentTime = 500,
             isFinished = false,
@@ -68,11 +76,15 @@ local SAMPLE_ITEMS = {
     },
     {
         id = "li_ccc",
-        title = "Charlie's Challenge",
-        author = "Chuck Novelist",
         mediaType = "book",
         addedAt = 2000,
-        media = { duration = 5400 },
+        media = {
+            duration = 5400,
+            metadata = {
+                title = "Charlie's Challenge",
+                authorName = "Chuck Novelist",
+            },
+        },
         userMediaProgress = {
             currentTime = 200,
             isFinished = false,
@@ -81,20 +93,28 @@ local SAMPLE_ITEMS = {
     },
     {
         id = "li_ddd",
-        title = "Delta Dawn",
-        author = "Amy Writer",
         mediaType = "book",
         addedAt = 4000,
-        media = { duration = 1800 },
+        media = {
+            duration = 1800,
+            metadata = {
+                title = "Delta Dawn",
+                authorName = "Amy Writer",
+            },
+        },
         userMediaProgress = nil,
     },
     {
         id = "li_eee",
-        title = "Echo Chamber",
-        author = "Eva Storyteller",
         mediaType = "book",
         addedAt = 5000,
-        media = { duration = 9000 },
+        media = {
+            duration = 9000,
+            metadata = {
+                title = "Echo Chamber",
+                authorName = "Eva Storyteller",
+            },
+        },
         userMediaProgress = {
             currentTime = 9000,
             isFinished = true,
@@ -203,7 +223,7 @@ run_test("getItems search filters by title (case-insensitive)", function()
 
     local result = library_store.getItems({ search = "alpha" })
     mock.assert_equals(result.total_items, 1, "search 'alpha' should match 1 item")
-    mock.assert_equals(result.items[1].title, "Alpha Book", "should match Alpha Book")
+    mock.assert_equals(library_store.getItemTitle(result.items[1]), "Alpha Book", "should match Alpha Book")
 end)
 
 -- ============================================================
@@ -237,11 +257,11 @@ run_test("getItems sort by title_asc (default)", function()
     library_store.fetchAll("lib_001")
 
     local result = library_store.getItems({ sort = "title_asc" })
-    mock.assert_equals(result.items[1].title, "Alpha Book", "first should be Alpha Book")
-    mock.assert_equals(result.items[2].title, "Beta Book", "second should be Beta Book")
-    mock.assert_equals(result.items[3].title, "Charlie's Challenge", "third should be Charlie's Challenge")
-    mock.assert_equals(result.items[4].title, "Delta Dawn", "fourth should be Delta Dawn")
-    mock.assert_equals(result.items[5].title, "Echo Chamber", "fifth should be Echo Chamber")
+    mock.assert_equals(library_store.getItemTitle(result.items[1]), "Alpha Book", "first should be Alpha Book")
+    mock.assert_equals(library_store.getItemTitle(result.items[2]), "Beta Book", "second should be Beta Book")
+    mock.assert_equals(library_store.getItemTitle(result.items[3]), "Charlie's Challenge", "third should be Charlie's Challenge")
+    mock.assert_equals(library_store.getItemTitle(result.items[4]), "Delta Dawn", "fourth should be Delta Dawn")
+    mock.assert_equals(library_store.getItemTitle(result.items[5]), "Echo Chamber", "fifth should be Echo Chamber")
 end)
 
 -- ============================================================
@@ -252,8 +272,8 @@ run_test("getItems sort by title_desc", function()
     library_store.fetchAll("lib_001")
 
     local result = library_store.getItems({ sort = "title_desc" })
-    mock.assert_equals(result.items[1].title, "Echo Chamber", "first should be Echo Chamber")
-    mock.assert_equals(result.items[5].title, "Alpha Book", "last should be Alpha Book")
+    mock.assert_equals(library_store.getItemTitle(result.items[1]), "Echo Chamber", "first should be Echo Chamber")
+    mock.assert_equals(library_store.getItemTitle(result.items[5]), "Alpha Book", "last should be Alpha Book")
 end)
 
 -- ============================================================
@@ -264,9 +284,9 @@ run_test("getItems sort by author_asc", function()
     library_store.fetchAll("lib_001")
 
     local result = library_store.getItems({ sort = "author_asc" })
-    mock.assert_equals(result.items[1].author, "Amy Writer", "first should be Amy Writer")
-    mock.assert_equals(result.items[2].author, "Amy Writer", "second should also be Amy Writer")
-    mock.assert_equals(result.items[5].author, "Zoe Author", "last should be Zoe Author")
+    mock.assert_equals(library_store.getItemAuthor(result.items[1]), "Amy Writer", "first should be Amy Writer")
+    mock.assert_equals(library_store.getItemAuthor(result.items[2]), "Amy Writer", "second should also be Amy Writer")
+    mock.assert_equals(library_store.getItemAuthor(result.items[5]), "Zoe Author", "last should be Zoe Author")
 end)
 
 -- ============================================================
@@ -277,8 +297,8 @@ run_test("getItems sort by author_desc", function()
     library_store.fetchAll("lib_001")
 
     local result = library_store.getItems({ sort = "author_desc" })
-    mock.assert_equals(result.items[1].author, "Zoe Author", "first should be Zoe Author")
-    mock.assert_equals(result.items[5].author, "Amy Writer", "last should be Amy Writer")
+    mock.assert_equals(library_store.getItemAuthor(result.items[1]), "Zoe Author", "first should be Zoe Author")
+    mock.assert_equals(library_store.getItemAuthor(result.items[5]), "Amy Writer", "last should be Amy Writer")
 end)
 
 -- ============================================================
@@ -383,7 +403,7 @@ run_test("getItems uses stored sort when no sort in opts", function()
 
     library_store.setSort("title_desc")
     local result = library_store.getItems()
-    mock.assert_equals(result.items[1].title, "Echo Chamber", "should use stored sort (title_desc)")
+    mock.assert_equals(library_store.getItemTitle(result.items[1]), "Echo Chamber", "should use stored sort (title_desc)")
 end)
 
 -- ============================================================

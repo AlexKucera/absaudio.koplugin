@@ -11,7 +11,18 @@
 local abs_logger = require("abs_logger")
 
 -- Try to load dependencies
-local lfs_ok, lfs = pcall(require, "lfs")
+local lfs = nil
+local lfs_ok = false
+
+-- KOReader provides lfs as a global (built into LuaJIT), not always as a loadable module
+local _pcall_ok, _pcall_lfs = pcall(require, "lfs")
+if _pcall_ok then
+    lfs = _pcall_lfs
+    lfs_ok = true
+elseif type(_G.lfs) == "table" and _G.lfs.mkdir then
+    lfs = _G.lfs
+    lfs_ok = true
+end
 local has_api, api = pcall(require, "api")
 
 local cover_cache = {}
@@ -54,9 +65,30 @@ function cover_cache.fetchAndCache(item_id)
         return true, cover_cache.getCoverPath(item_id)
     end
 
-    -- Ensure cache directory exists
-    if lfs_ok and cache_dir and not lfs.attributes(cache_dir, "mode") then
-        lfs.mkdir(cache_dir)
+    -- Ensure cache directory exists (recursive, like mkdir -p)
+    if not lfs_ok then
+        abs_logger.warn("lfs module not available — cannot create cache directory")
+    end
+    if lfs_ok and cache_dir then
+        local mode = lfs.attributes(cache_dir, "mode")
+        if mode ~= "directory" then
+            -- Build path from root, creating each missing component
+            local parts = {}
+            for part in cache_dir:gmatch("[^/]+") do
+                table.insert(parts, part)
+            end
+            local path_so_far = ""
+            for _, part in ipairs(parts) do
+                path_so_far = path_so_far .. "/" .. part
+                if lfs.attributes(path_so_far, "mode") ~= "directory" then
+                    local ok, err = lfs.mkdir(path_so_far)
+                    if not ok then
+                        abs_logger.warn("Cannot create cache dir " .. path_so_far .. ": " .. tostring(err))
+                        return false, {type = "io", message = "Cannot create cache directory"}
+                    end
+                end
+            end
+        end
     end
 
     -- Fetch from API
@@ -77,7 +109,7 @@ function cover_cache.fetchAndCache(item_id)
         file:write(data)
     end
 
-    local ok, result = api:getCover(item_id, file_sink)
+    local ok, result = api.getCover(item_id, file_sink)
     file:close()
 
     if not ok then
