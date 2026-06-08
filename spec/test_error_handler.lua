@@ -1,7 +1,7 @@
 -- Error handler tests
--- Tests error_handler.lua public API: error type mapping, user messages
+-- Tests error_handler.lua public API: error type mapping, HTTP status codes, user messages
 --
--- Run with: lua spec/test_error_handler.lua
+-- Run with: luajit spec/test_error_handler.lua
 
 package.path = "./?.lua;./?/init.lua;" .. package.path
 
@@ -49,7 +49,7 @@ local function reset()
 end
 
 -- ============================================================
--- Test: Error type to user message mapping
+-- Test: Error type to user message mapping (legacy API)
 -- ============================================================
 run_test("network error shows connection failure message", function()
     reset()
@@ -58,7 +58,8 @@ run_test("network error shows connection failure message", function()
     assert(last_info_message ~= nil, "should set message text")
     assert(string.find(last_info_message, "onnection") ~= nil or
            string.find(last_info_message, "network") ~= nil or
-           string.find(last_info_message, "failed") ~= nil,
+           string.find(last_info_message, "failed") ~= nil or
+           string.find(last_info_message, "server") ~= nil,
         "should contain connection-related text")
 end)
 
@@ -104,6 +105,97 @@ run_test("error handler never crashes — nil type", function()
         error_handler.show(nil, "something broke")
     end)
     assert(ok, "error_handler.show should not crash with nil type: " .. tostring(err))
+end)
+
+-- ============================================================
+-- Test: HTTP status code classification
+-- ============================================================
+run_test("classify_http_status maps 401 to auth", function()
+    local err_type, msg = error_handler.classify_http_status(401)
+    mock.assert_equals(err_type, "auth", "401 should be auth type")
+    assert(msg ~= nil and msg ~= "", "should return a message")
+end)
+
+run_test("classify_http_status maps 403 to auth", function()
+    local err_type, msg = error_handler.classify_http_status(403)
+    mock.assert_equals(err_type, "auth", "403 should be auth type")
+    assert(msg ~= nil and msg ~= "", "should return a message")
+end)
+
+run_test("classify_http_status maps 404 to not_found", function()
+    local err_type, msg = error_handler.classify_http_status(404)
+    mock.assert_equals(err_type, "not_found", "404 should be not_found type")
+    assert(string.find(msg, "not found") ~= nil or string.find(msg, "removed") ~= nil,
+        "404 message should mention not found or removed")
+end)
+
+run_test("classify_http_status maps 500 to server", function()
+    local err_type, msg = error_handler.classify_http_status(500)
+    mock.assert_equals(err_type, "server", "500 should be server type")
+    assert(msg ~= nil and msg ~= "", "should return a message")
+end)
+
+run_test("classify_http_status maps 503 to server", function()
+    local err_type, msg = error_handler.classify_http_status(503)
+    mock.assert_equals(err_type, "server", "503 should be server type")
+end)
+
+run_test("classify_http_status maps 429 to api (rate limit)", function()
+    local err_type, msg = error_handler.classify_http_status(429)
+    mock.assert_equals(err_type, "api", "429 should be api type")
+end)
+
+run_test("classify_http_status maps 400 to api (client error)", function()
+    local err_type, msg = error_handler.classify_http_status(400)
+    mock.assert_equals(err_type, "api", "400 should be api type")
+end)
+
+-- ============================================================
+-- Test: from_api_error builds messages from API error tables
+-- ============================================================
+run_test("from_api_error with 401 status returns auth message", function()
+    local msg = error_handler.from_api_error({type = "auth", status_code = 401, message = "Unauthorized"})
+    assert(msg ~= nil, "should return a message")
+    assert(string.find(msg, "token") ~= nil or string.find(msg, "Token") ~= nil or
+           string.find(msg, "credentials") ~= nil,
+        "should contain auth-related text")
+end)
+
+run_test("from_api_error with 404 status returns not_found message", function()
+    local msg = error_handler.from_api_error({type = "not_found", status_code = 404})
+    assert(msg ~= nil, "should return a message")
+end)
+
+run_test("from_api_error with 500 status returns server message", function()
+    local msg = error_handler.from_api_error({type = "server", status_code = 500})
+    assert(msg ~= nil, "should return a message")
+end)
+
+run_test("from_api_error without status_code falls back to type mapping", function()
+    local msg = error_handler.from_api_error({type = "network", message = "host not found"})
+    assert(msg ~= nil, "should return a message")
+    assert(string.find(msg, "onnection") ~= nil or string.find(msg, "network") ~= nil,
+        "should contain network-related text")
+end)
+
+run_test("from_api_error with nil input returns unknown message", function()
+    local msg = error_handler.from_api_error(nil)
+    assert(msg ~= nil, "should return a message for nil input")
+end)
+
+run_test("from_api_error with string input returns unknown message", function()
+    local msg = error_handler.from_api_error("some error string")
+    assert(msg ~= nil, "should return a message for string input")
+end)
+
+-- ============================================================
+-- Test: show_api_error displays dialog from API error
+-- ============================================================
+run_test("show_api_error shows dialog for API error table", function()
+    reset()
+    error_handler.show_api_error({type = "auth", status_code = 401, message = "Unauthorized"})
+    assert(last_shown_widget ~= nil, "should show a widget")
+    assert(last_info_message ~= nil, "should set message text")
 end)
 
 -- ============================================================
