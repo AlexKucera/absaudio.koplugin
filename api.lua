@@ -468,7 +468,10 @@ function api.getCover(item_id, sink)
     local request = {
         url = server_url .. "/api/items/" .. item_id .. "/cover",
         method = "GET",
-        headers = build_headers(),
+        headers = {
+            ["Authorization"] = "Bearer " .. (auth_token or ""),
+            ["Accept"] = "image/*,*/*",
+        },
         sink = sink,
     }
 

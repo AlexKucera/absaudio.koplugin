@@ -24,6 +24,7 @@ elseif type(_G.lfs) == "table" and _G.lfs.mkdir then
     lfs_ok = true
 end
 local has_api, api = pcall(require, "api")
+local ltn12_ok, ltn12 = pcall(require, "ltn12")
 
 local cover_cache = {}
 
@@ -98,28 +99,35 @@ function cover_cache.fetchAndCache(item_id)
 
     local cover_path = cover_cache.getCoverPath(item_id)
 
-    -- Open file for writing and stream cover data to it
+    -- Fetch cover data using ltn12.sink.table (same pattern as all other
+    -- API endpoints). This ensures the complete response is collected
+    -- before writing to disk, avoiding truncated files.
+    local response_body = {}
+    local sink = ltn12_ok and ltn12.sink.table(response_body) or nil
+
+    local ok, result = api.getCover(item_id, sink)
+
+    if not ok then
+        abs_logger.warn("Cover fetch failed for " .. item_id)
+        return false, result
+    end
+
+    -- Write complete response body to file in one shot
+    local cover_data = table.concat(response_body)
+    if not cover_data or cover_data == "" then
+        abs_logger.warn("Empty cover response for " .. item_id)
+        return false, {type = "parse", message = "Empty cover response"}
+    end
+
     local file, open_err = io.open(cover_path, "wb")
     if not file then
         abs_logger.warn("Cannot create cover file: " .. tostring(open_err))
         return false, {type = "io", message = "Cannot write cover file"}
     end
-
-    local function file_sink(data)
-        file:write(data)
-    end
-
-    local ok, result = api.getCover(item_id, file_sink)
+    file:write(cover_data)
     file:close()
 
-    if not ok then
-        -- Clean up failed file
-        os.remove(cover_path)
-        abs_logger.warn("Cover fetch failed for " .. item_id)
-        return false, result
-    end
-
-    abs_logger.info("Cover cached: " .. item_id)
+    abs_logger.info("Cover cached: " .. item_id .. " (" .. #cover_data .. " bytes)")
     return true, cover_path
 end
 

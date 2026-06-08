@@ -51,13 +51,30 @@ end
 
 package.loaded["lfs"] = mock_file_system
 
+-- Mock ltn12 (LuaSocket's transfer encoding module)
+package.loaded["ltn12"] = {
+    sink = {
+        table = function(t)
+            return function(chunk)
+                if chunk then table.insert(t, chunk) end
+                return true
+            end
+        end,
+    },
+}
+
 -- Mock api module
 local mock_api = {
     _cover_sink = nil,
     _cover_ok = true,
+    _cover_data = "FAKEJPEGDATA",
     getCover = function(item_id, sink)
         mock_api._cover_sink = sink
-        if mock_api._cover_ok then
+        if mock_api._cover_ok and sink then
+            -- Simulate streaming chunks to the ltn12 sink
+            sink(mock_api._cover_data)
+            return true, 200
+        elseif mock_api._cover_ok then
             return true, 200
         end
         return false, {type = "network", message = "connection failed"}

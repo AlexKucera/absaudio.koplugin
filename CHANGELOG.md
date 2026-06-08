@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file. The format 
 
 - **library:** correct title/author extraction to read from nested media.metadata instead of flat fields; fixes all items showing Unknown Title
 - **cover-cache:** fix api.getCover method call (colon to dot), dual-path lfs loading for KOReader, and recursive mkdir for cache directory creation
+- **cover-cache:** replace streaming file_sink with ltn12.sink.table bulk write to prevent truncated cover files
 
 - **cover-cache:** add cover art fetch and local JPEG cache module with hasCachedCover/fetchAndCache API
 - **library-store:** add data layer with client-side search, 6 sort modes, and pagination (25/page) over cached ABS items
