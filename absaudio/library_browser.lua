@@ -84,16 +84,9 @@ function LibraryBrowserView:init()
         self.key_events.Close = { { Device.input.group.Back } }
     end
 
-    -- Swipe down closes the browser
-    if Device:isTouchDevice() then
-        self.ges_events = self.ges_events or {}
-        self.ges_events.Swipe = {
-            GestureRange:new{
-                ges = "swipe",
-                range = function() return self.dimen end,
-            },
-        }
-    end
+    -- We do NOT register ges_events.Swipe here so that swipe events
+    -- propagate to the ScrollableContainer child for scrolling.
+    -- Close via Back key (key_events.Close) or the ← Back button.
 
     local screen_size = Screen:getSize()
     self.dimen = screen_size
@@ -116,18 +109,19 @@ function LibraryBrowserView:init()
     -- Book list (populated from library_store)
     self:_addBookList()
 
-    -- Load more button (if more pages)
-    self:_addLoadMore()
+    -- Page navigation (Prev / Page X/Y / Next)
+    self:_addPageNav()
 
     -- Bottom padding
     table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.large })
 
     -- Wrap in scrollable container
-    self.scrollable = ScrollableContainer:new{
+    self.cropping_widget = ScrollableContainer:new{
         dimen = Geom:new{
             w = self.screen_width,
             h = self.screen_height,
         },
+        show_parent = self,
         self.content_group,
     }
 
@@ -139,10 +133,10 @@ function LibraryBrowserView:init()
         bordersize = 0,
         padding = 0,
         margin = 0,
-        self.scrollable,
+        self.cropping_widget,
     }
-end
 
+end
 ------------------------------------------------------------------------
 -- Header bar with back, title, sort, and search
 ------------------------------------------------------------------------
@@ -444,66 +438,134 @@ function LibraryBrowserView:_addBookRow(item)
     table.insert(self.content_group, row_container)
 end
 
-------------------------------------------------------------------------
--- Load more button
-------------------------------------------------------------------------
-function LibraryBrowserView:_addLoadMore()
+-----------------------------------------------------------------------
+-- Page navigation bar (Prev / Page X of Y / Next)
+-----------------------------------------------------------------------
+function LibraryBrowserView:_addPageNav()
     local result = library_store.getItems({
         page = _current_page,
         per_page = 25,
         search = _search_query,
     })
 
-    if result.total_pages > _current_page then
-        local more_text = TextWidget:new{
-            text = _("Load more…"),
-            face = Font:getFace("cfont", 16),
-            fgcolor = Blitbuffer.COLOR_BLUE,
+    -- Only show page nav when there's more than one page
+    if result.total_pages <= 1 then return end
+
+    local nav_height = Size.padding.large * 2 + 30
+
+    -- Page info text
+    local page_text = TextWidget:new{
+        text = _(string.format("Page %d / %d", _current_page, result.total_pages)),
+        face = Font:getFace("cfont", 14),
+        fgcolor = Blitbuffer.COLOR_DARK_GRAY,
+    }
+
+    -- Prev button
+    local prev_enabled = _current_page > 1
+    local prev_text = TextWidget:new{
+        text = _("← Prev"),
+        face = Font:getFace("cfont", 16),
+        fgcolor = prev_enabled and Blitbuffer.COLOR_BLUE or Blitbuffer.COLOR_GRAY,
+    }
+    local prev_btn = InputContainer:new{
+        dimen = Geom:new{
+            w = self.content_width * 0.3,
+            h = nav_height,
+        },
+    }
+    if prev_enabled then
+        prev_btn.ges_events.TapPrev = {
+            GestureRange:new{ ges = "tap", range = prev_btn.dimen },
         }
-        local more_container = InputContainer:new{
-            dimen = Geom:new{
-                w = self.content_width,
-                h = more_text:getSize().h + Size.padding.large,
-            },
-        }
-        more_container.ges_events.TapMore = {
-            GestureRange:new{
-                ges = "tap",
-                range = more_container.dimen,
-            },
-        }
-        more_container.browser_ref = self.browser_ref
-        function more_container:onTapMore()
-            self.browser_ref:onLoadMore()
+        prev_btn.browser_ref = self.browser_ref
+        function prev_btn:onTapPrev()
+            self.browser_ref:onPrevPage()
             return true
         end
-        more_container[1] = CenterContainer:new{
-            dimen = Geom:new{
-                w = self.content_width,
-                h = more_text:getSize().h + Size.padding.large,
-            },
-            more_text,
+    end
+    prev_btn[1] = CenterContainer:new{
+        dimen = Geom:new{ w = self.content_width * 0.3, h = nav_height },
+        prev_text,
+    }
+
+    -- Next button
+    local next_enabled = _current_page < result.total_pages
+    local next_text = TextWidget:new{
+        text = _("Next →"),
+        face = Font:getFace("cfont", 16),
+        fgcolor = next_enabled and Blitbuffer.COLOR_BLUE or Blitbuffer.COLOR_GRAY,
+    }
+    local next_btn = InputContainer:new{
+        dimen = Geom:new{
+            w = self.content_width * 0.3,
+            h = nav_height,
+        },
+    }
+    if next_enabled then
+        next_btn.ges_events.TapNext = {
+            GestureRange:new{ ges = "tap", range = next_btn.dimen },
         }
-        table.insert(self.content_group, more_container)
+        next_btn.browser_ref = self.browser_ref
+        function next_btn:onTapNext()
+            self.browser_ref:onNextPage()
+            return true
+        end
+    end
+    next_btn[1] = CenterContainer:new{
+        dimen = Geom:new{ w = self.content_width * 0.3, h = nav_height },
+        next_text,
+    }
+
+    -- Spacer for center text
+    local spacer = HorizontalSpan:new{ width = self.content_width * 0.4 }
+
+    local nav_bar = HorizontalGroup:new{
+        dimen = Geom:new{
+            w = self.content_width,
+            h = nav_height,
+        },
+        prev_btn,
+        CenterContainer:new{
+            dimen = Geom:new{ w = self.content_width * 0.4, h = nav_height },
+            page_text,
+        },
+        next_btn,
+    }
+
+    -- Top separator line
+    local sep = LineWidget:new{
+        dimen = Geom:new{ w = self.content_width, h = Size.line.thin },
+    }
+
+    table.insert(self.content_group, sep)
+    table.insert(self.content_group, nav_bar)
+end
+
+function LibraryBrowserView:onPrevPage()
+    if _current_page > 1 then
+        _current_page = _current_page - 1
+        abs_logger.verbose("Previous page: " .. _current_page)
+        self:_refresh()
     end
 end
 
-------------------------------------------------------------------------
--- Navigation handlers
-------------------------------------------------------------------------
-function LibraryBrowserView:onClose()
+function LibraryBrowserView:onNextPage()
+    _current_page = _current_page + 1
+    abs_logger.verbose("Loading page " .. _current_page)
+    self:_refresh()
+end
+
+function LibraryBrowserView:_refresh()
     UIManager:close(self)
+    _view = LibraryBrowserView:new{}
+    UIManager:show(_view)
+end
+
+function LibraryBrowserView:onClose()
     if _on_back then
         _on_back()
     end
-    return true
-end
-
-function LibraryBrowserView:onSwipe(arg, ges_ev)
-    if ges_ev.direction == "south" then
-        self:onClose()
-    end
-    return true
+    UIManager:close(self)
 end
 
 function LibraryBrowserView:onBookTap(item)
@@ -575,18 +637,6 @@ function LibraryBrowserView:onSearch()
     UIManager:show(input_dialog)
     input_dialog:onShowKeyboard()
     return true
-end
-
-function LibraryBrowserView:onLoadMore()
-    _current_page = _current_page + 1
-    abs_logger.verbose("Loading page " .. _current_page)
-    self:_refresh()
-end
-
-function LibraryBrowserView:_refresh()
-    UIManager:close(self)
-    _view = LibraryBrowserView:new{}
-    UIManager:show(_view)
 end
 
 ------------------------------------------------------------------------
