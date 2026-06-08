@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file. The format 
 
 ### feat
 
+- **library-browser:** DPI-scale cover thumbnails, compute dynamic page size from screen dimensions, fetch all covers upfront with persistent cache, add clear-cache button in settings
+
 ### fix
 
 - **library:** correct title/author extraction to read from nested media.metadata instead of flat fields; fixes all items showing Unknown Title

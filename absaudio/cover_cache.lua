@@ -73,18 +73,22 @@ function cover_cache.fetchAndCache(item_id)
     if lfs_ok and cache_dir then
         local mode = lfs.attributes(cache_dir, "mode")
         if mode ~= "directory" then
-            -- Build path from root, creating each missing component
+            -- Create each missing path component (mkdir -p)
             local parts = {}
             for part in cache_dir:gmatch("[^/]+") do
-                table.insert(parts, part)
+                if part ~= "." then
+                    table.insert(parts, part)
+                end
             end
-            local path_so_far = ""
+            -- Preserve leading / for absolute paths, or use relative
+            local path_so_far = cache_dir:match("^/") and "/" or ""
             for _, part in ipairs(parts) do
-                path_so_far = path_so_far .. "/" .. part
-                if lfs.attributes(path_so_far, "mode") ~= "directory" then
-                    local ok, err = lfs.mkdir(path_so_far)
+                path_so_far = path_so_far .. part .. "/"
+                local dir = path_so_far:sub(1, -2) -- strip trailing /
+                if lfs.attributes(dir, "mode") ~= "directory" then
+                    local ok, err = lfs.mkdir(dir)
                     if not ok then
-                        abs_logger.warn("Cannot create cache dir " .. path_so_far .. ": " .. tostring(err))
+                        abs_logger.warn("Cannot create cache dir " .. dir .. ": " .. tostring(err))
                         return false, {type = "io", message = "Cannot create cache directory"}
                     end
                 end

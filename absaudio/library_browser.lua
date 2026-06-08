@@ -273,12 +273,27 @@ function LibraryBrowserView:_addSeparator()
 end
 
 ------------------------------------------------------------------------
+-- Calculate items per page based on screen height and row height
+function LibraryBrowserView:_getPerPage()
+    local row_height = Screen:scaleBySize(100)
+    -- Measure actual heights of widgets already added to content_group
+    -- (header, separator, search indicator). Page nav hasn't been added yet
+    -- so we estimate it.
+    local used_h = 0
+    for _, w in ipairs(self.content_group) do
+        used_h = used_h + w:getSize().h
+    end
+    -- Estimate nav bar height (not yet added)
+    local nav_h = Size.padding.large * 2 + 30
+    local available = self.screen_height - used_h - nav_h
+    return math.max(1, math.floor(available / row_height))
+end
 -- Book list — renders current page of items
 ------------------------------------------------------------------------
 function LibraryBrowserView:_addBookList()
     local result = library_store.getItems({
         page = _current_page,
-        per_page = 25,
+        per_page = self:_getPerPage(),
         search = _search_query,
     })
 
@@ -328,9 +343,9 @@ end
 -- Single book row: cover thumbnail + title/author/duration
 ------------------------------------------------------------------------
 function LibraryBrowserView:_addBookRow(item)
-    local row_height = 80
-    local thumb_width = 60
-    local thumb_height = 80
+    local row_height = Screen:scaleBySize(100)
+    local thumb_width = Screen:scaleBySize(80)
+    local thumb_height = Screen:scaleBySize(100)
     local text_area_width = self.content_width - thumb_width - Size.padding.default
 
     -- Cover thumbnail
@@ -359,7 +374,7 @@ function LibraryBrowserView:_addBookRow(item)
                 dimen = Geom:new{ w = thumb_width, h = thumb_height },
                 TextWidget:new{
                     text = "🎵",
-                    face = Font:getFace("cfont", 20),
+                    face = Font:getFace("cfont", Screen:scaleBySize(22)),
                     fgcolor = Blitbuffer.COLOR_DARK_GRAY,
                 },
             },
@@ -398,7 +413,7 @@ function LibraryBrowserView:_addBookRow(item)
 
     local info_widget = TextBoxWidget:new{
         text = info_lines,
-        face = Font:getFace("cfont", 14),
+        face = Font:getFace("cfont", 16),
         width = text_area_width,
         fgcolor = Blitbuffer.COLOR_BLACK,
     }
@@ -444,7 +459,7 @@ end
 function LibraryBrowserView:_addPageNav()
     local result = library_store.getItems({
         page = _current_page,
-        per_page = 25,
+        per_page = self:_getPerPage(),
         search = _search_query,
     })
 
@@ -700,8 +715,8 @@ function browser.show(callbacks)
 
         print("[ABS-BROWSER] initializing cover cache...")
         if has_cover_cache then
-            local config = require("config")
-            local cache_dir = (config.get("download_dir") or "/tmp") .. "/abs_covers"
+            local DataStorage = require("datastorage")
+            local cache_dir = DataStorage:getSettingsDir() .. "/absaudio_covers"
             cover_cache.init(cache_dir)
         end
 
@@ -730,13 +745,17 @@ end
 -- Batch cover fetch for current page items
 ------------------------------------------------------------------------
 function browser._scheduleCoverFetch()
-    UIManager:scheduleIn(1, function()
+    -- Fetch covers for ALL library items, not just current page.
+    -- Covers are persistently cached so this only downloads missing ones.
+    UIManager:scheduleIn(0.5, function()
         if not _view then return end
+
+        -- Get the full library (all pages, no pagination)
         local result = library_store.getItems({
-            page = _current_page,
-            per_page = _per_page,
-            search = _search_query ~= "" and _search_query or nil,
+            page = 1,
+            per_page = 9999,  -- all items
         })
+
         local fetched_any = false
         for _, item in ipairs(result.items) do
             if not cover_cache.hasCachedCover(item.id) then
@@ -744,11 +763,35 @@ function browser._scheduleCoverFetch()
                 if ok then fetched_any = true end
             end
         end
+
         -- Refresh view to show newly cached covers
         if fetched_any and _view then
             _view:_refresh()
         end
     end)
+end
+
+--- Clear all cached cover images
+function browser.clearCoverCache()
+    local DataStorage = require("datastorage")
+    local cache_dir = DataStorage:getSettingsDir() .. "/absaudio_covers"
+    local lfs = _G.lfs or require("lfs")
+
+    if lfs.attributes(cache_dir, "mode") ~= "directory" then
+        return 0
+    end
+
+    local count = 0
+    for file in lfs.dir(cache_dir) do
+        if file:match("%.jpg$") then
+            local path = cache_dir .. "/" .. file
+            os.remove(path)
+            count = count + 1
+        end
+    end
+
+    abs_logger.info("Cleared " .. count .. " cached covers")
+    return count
 end
 
 return browser

@@ -183,6 +183,20 @@ function ABSAudio:onShowSettings()
                     end,
                 },
             },
+            {
+                {
+                    text = _("Clear cover cache"),
+                    callback = function()
+                        local library_browser = require("absaudio/library_browser")
+                        local count = library_browser.clearCoverCache()
+                        UIManager:show(require("ui/widget/infomessage"):new{
+                            text = count > 0
+                                and T(_("Cleared %1 cached cover images."), count)
+                                or _("No cached covers found."),
+                        })
+                    end,
+                },
+            },
         },
     }
     UIManager:show(settings_dialog)
