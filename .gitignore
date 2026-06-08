@@ -46,3 +46,5 @@ docs/.DS_Store
 
 .claude/
 .DS_Store
+
+.env

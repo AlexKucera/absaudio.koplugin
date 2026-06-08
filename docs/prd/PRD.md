@@ -92,6 +92,9 @@ The plugin is structured as a fork of `naleo/audiobookshelf.koplugin` with signi
 - **Player** (`player.lua`) — LuaJIT FFI wrapper around PocketBook inkview audio API. Interface: `play(playlist_path)`, `pause()`, `resume()`, `stop()`, `close()`, `getPosition()` → seconds, `setPosition(global_seconds)`, `getDuration()` → seconds, `getCurrentTrack()` → index, `getPlaybackSpeed()` / `setPlaybackSpeed(multiplier)`. Internally handles global-position ↔ (track, offset) conversion, playlist loading via `LoadPlaylist()`, fallback to single-file `PlayFile()` if playlist APIs fail.
 - **Chapter navigator** — pure logic module (no FFI dependency). Given a chapters array and a global position, returns current chapter index/name, next/prev chapter, seeks to chapter start. Used by both detail view (chapter list) and playback view (current chapter display).
 
+### Player Lifecycle (Background Audio)
+
+The player instance lives at the plugin module level, not tied to any UI widget. When the user backs out of the plugin (or opens an ebook in KOReader's reader), audio continues playing — `stop()` and `close()` are only called on explicit user action or sleep timer. Re-opening the plugin reconnects to the existing player rather than creating a new one. This enables the v2 "read-along" workflow (listen to the audiobook while reading the ebook in KOReader's reader) without any architectural changes — it's just background audio while KOReader does its normal thing.
 **Sync** (thin layer over API client):
 - **Sync module** (`sync.lua`) — `pullProgress(item_id)` (GET from ABS, update manifest if ahead), `pushProgress(item_id)` (PATCH to ABS from manifest/player). Contains conflict resolution logic: compare local vs server `currentTime`, keep furthest, guard `isFinished=true` with confirmation dialog. Offline-aware: returns success/failure without blocking caller.
 
@@ -234,6 +237,7 @@ No existing test framework in the reference plugin (naleo). KOReader itself has 
 - Podcast support — ABS handles podcasts but this plugin targets audiobooks (`mediaType == "book"`)
 - CI/CD pipelines — personal private repo
 - Coupling to stradichenko/audiobook.koplugin — confirmed to be a TTS engine, not relevant
+- Immersion reading / synced text highlighting — v1 provides background audio only; text-to-audio position alignment is out of scope
 
 ## Further Notes
 
