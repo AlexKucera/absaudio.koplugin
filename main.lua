@@ -64,7 +64,7 @@ function ABSAudio:addToMainMenu(menu_items)
         sub_item_table = {
             {
                 text = _("Open dashboard"),
-                keep_menu_open = true,
+                keep_menu_open = false,
                 callback = function()
                     self:onOpenDashboard()
                 end,
@@ -105,9 +105,13 @@ function ABSAudio:onOpenDashboard()
     -- Set logger level from config
     abs_logger.set_level(config.get("log_level") or "verbose")
 
-    -- Show dashboard
+    -- Show dashboard after menu closes (schedule to next event loop tick)
+    -- The menu calls our callback synchronously, then closes itself after.
+    -- By scheduling, we ensure the menu is gone before the dashboard renders.
     if has_dashboard then
-        dashboard.show()
+        UIManager:scheduleIn(0.1, function()
+            dashboard.show()
+        end)
     else
         -- Dashboard not yet available — show placeholder
         UIManager:show(InfoMessage:new{
@@ -116,7 +120,6 @@ function ABSAudio:onOpenDashboard()
         })
     end
 end
-
 --- Show the settings dialog with all config fields
 function ABSAudio:onShowSettings()
     abs_logger.verbose("Showing settings dialog")
