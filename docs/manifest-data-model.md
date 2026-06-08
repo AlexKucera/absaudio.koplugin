@@ -88,3 +88,13 @@ On plugin startup, the manifest is reconciled against actual files on disk: if a
 - **Downloaded Books list**: `manifest.getAllBooks()` → shows all entries with progress badges
 - **Progress badge**: `format_progress(current_time, duration)` → "42% · 2h 30m / 6h 0m"
 - **Incomplete download badge**: Files with `partial` or `pending` status show "⚠ Resume download"
+
+## Dashboard Settings Section
+
+The dashboard Settings section provides three action buttons:
+
+- **⚙ Server & Token**: Opens the plugin config dialog (server URL + API token). Wired via callback from the plugin's `onShowSettings()` method.
+- **↻ Sync Now**: Stub for future sync functionality. Shows placeholder message.
+- **📋 Export Diagnostics**: Stub for future diagnostics export. Shows placeholder message.
+
+Callbacks are passed to `dashboard.show()` as a table: `{ on_settings, on_sync_now, on_export_diagnostics }`.

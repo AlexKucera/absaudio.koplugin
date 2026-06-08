@@ -263,6 +263,71 @@ run_test("updatePosition updates current_time and is_finished", function()
 end)
 
 -- ============================================================
+-- Test: getRecentBook returns book with highest current_time
+-- ============================================================
+run_test("getRecentBook returns book with highest current_time", function()
+    mock_settings = mock.create_lua_settings({})
+
+    manifest.init()
+
+    manifest.addBook({
+        abs_item_id = "li_book1",
+        title = "Book One",
+        author = "Author A",
+        local_dir = "/tmp/book1",
+        files = {},
+        current_time = 500,
+        duration = 3600,
+        chapters = {},
+        is_finished = false,
+        last_synced_at = 0,
+    })
+
+    manifest.addBook({
+        abs_item_id = "li_book2",
+        title = "Book Two",
+        author = "Author B",
+        local_dir = "/tmp/book2",
+        files = {},
+        current_time = 1800,
+        duration = 7200,
+        chapters = {},
+        is_finished = false,
+        last_synced_at = 0,
+    })
+
+    manifest.addBook({
+        abs_item_id = "li_book3",
+        title = "Book Three",
+        author = "Author C",
+        local_dir = "/tmp/book3",
+        files = {},
+        current_time = 3000,
+        duration = 5400,
+        chapters = {},
+        is_finished = false,
+        last_synced_at = 0,
+    })
+
+    local recent = manifest.getRecentBook()
+    assert(recent ~= nil, "getRecentBook should return a book")
+    mock.assert_equals(recent.abs_item_id, "li_book3", "should return book with highest current_time")
+    mock.assert_equals(recent.current_time, 3000, "current_time should be 3000")
+end)
+
+-- ============================================================
+-- Test: getRecentBook returns nil when no books exist
+-- ============================================================
+run_test("getRecentBook returns nil when no books exist", function()
+    mock_settings = mock.create_lua_settings({})
+
+    manifest.init()
+
+    local recent = manifest.getRecentBook()
+    mock.assert_equals(recent, nil, "getRecentBook should return nil with no books")
+end)
+
+-- ============================================================
 -- Summary
 -- ============================================================
 print(string.format("\n%d passed, %d failed", passed, failed))

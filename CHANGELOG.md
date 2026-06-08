@@ -17,6 +17,8 @@ All notable changes to this project will be documented in this file. The format 
 - **manifest:** add CRUD module for per-book state tracking with LuaSettings persistence
 - **api:** add Audiobookshelf API client with 9 endpoints, Bearer auth, retry with backoff
 - **error-handler:** add HTTP status code mapping and from_api_error() for API errors
+- **dashboard:** wire Settings button to plugin config dialog via callbacks
+- **dashboard:** add Sync Now and Export Diagnostics stub buttons in Settings section
 
 ### test
 

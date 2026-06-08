@@ -51,6 +51,7 @@ They capture what was done, decisions & rationale, gotchas & fixes, and next ste
 
 | Date | Type | File | Summary |
 |------|------|------|----------|
+| 2026-06-08 | issue | [issue03-data-layer-dashboard-wiring-audit-fixes_log.md](docs/devlog/20260608-issue03-data-layer-dashboard-wiring-audit-fixes_log.md) | Audited Issue #3 acceptance criteria, fixed Settings→config dialog wiring, added Sync Now + Export Diagnostics stubs, added getRecentBook tests |
 | 2026-06-08 | slice | [dashboard-widget-fullscreen-rendering-fixes_log.md](docs/devlog/20260608-dashboard-widget-fullscreen-rendering-fixes_log.md) | Fixed fullscreen rendering, tap callback crashes, font error, and added back/swipe-to-close for dashboard widget |
 | 2026-06-08 | issue | [issue02-slice1-emulator-testing_log.md](docs/devlog/20260608-issue02-slice1-plugin-scaffold-emulator-testing_log.md) | Re-ran Issue #2 with emulator testing; fixed _meta.lua deprecation, set up kodev emulator, verified plugin loads cleanly |
 <!-- write-log: session-log-index-end -->

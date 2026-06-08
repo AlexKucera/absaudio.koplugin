@@ -110,7 +110,11 @@ function ABSAudio:onOpenDashboard()
     -- By scheduling, we ensure the menu is gone before the dashboard renders.
     if has_dashboard then
         UIManager:scheduleIn(0.1, function()
-            dashboard.show()
+            dashboard.show({
+                on_settings = function()
+                    self:onShowSettings()
+                end,
+            })
         end)
     else
         -- Dashboard not yet available — show placeholder

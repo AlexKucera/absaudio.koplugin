@@ -37,6 +37,11 @@ local has_api, api = pcall(require, "api")
 
 local dashboard = {}
 
+-- Callbacks passed from plugin (set via dashboard.show())
+local _on_settings = nil
+local _on_sync_now = nil
+local _on_export_diagnostics = nil
+
 ------------------------------------------------------------------------
 -- Helper: format seconds as "Xh Ym" or "Ym" or "0m"
 ------------------------------------------------------------------------
@@ -122,8 +127,8 @@ function DashboardView:init()
     -- Separator
     self:_addSeparator()
 
-    -- Settings entry
-    self:_addSettingsButton()
+    -- Settings section
+    self:_addSettingsSection()
 
     -- Wrap content in a scrollable container
     self.scrollable = ScrollableContainer:new{
@@ -352,9 +357,38 @@ function DashboardView:_addBrowseLibraryButton()
     table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.default })
 end
 
-function DashboardView:_addSettingsButton()
-    local btn = TextWidget:new{
+function DashboardView:_addSettingsSection()
+    -- Section header
+    local header = TextWidget:new{
         text = _("Settings"),
+        face = Font:getFace("cfont", 18),
+        bold = true,
+        fgcolor = Blitbuffer.COLOR_DARK_GRAY,
+    }
+    table.insert(self.content_group, header)
+    table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
+
+    -- Config dialog button
+    self:_addActionButton(_("⚙ Server & Token"), function()
+        self.dashboard_ref:_onOpenSettings()
+    end)
+
+    -- Sync Now button stub
+    self:_addActionButton(_("↻ Sync Now"), function()
+        self.dashboard_ref:_onSyncNow()
+    end)
+
+    -- Export Diagnostics button stub
+    self:_addActionButton(_("📋 Export Diagnostics"), function()
+        self.dashboard_ref:_onExportDiagnostics()
+    end)
+
+    table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.default })
+end
+
+function DashboardView:_addActionButton(label_text, callback)
+    local btn = TextWidget:new{
+        text = label_text,
         face = Font:getFace("cfont", 16),
         fgcolor = Blitbuffer.COLOR_BLUE,
     }
@@ -365,20 +399,19 @@ function DashboardView:_addSettingsButton()
             h = btn:getSize().h + Size.padding.default,
         },
     }
-    tap_container.ges_events.TapSettings = {
+    tap_container.ges_events.TapAction = {
         GestureRange:new{
             ges = "tap",
             range = tap_container.dimen,
         },
     }
     tap_container.dashboard_ref = self.dashboard_ref
-    function tap_container:onTapSettings()
-        self.dashboard_ref:_onOpenSettings()
+    function tap_container:onTapAction()
+        callback()
         return true
     end
     tap_container[1] = btn
     table.insert(self.content_group, tap_container)
-    table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.default })
 end
 
 function DashboardView:_addSeparator()
@@ -421,13 +454,43 @@ end
 
 function DashboardView:_onOpenSettings()
     abs_logger.info("Settings tapped from dashboard")
-    -- Open settings — find the plugin instance and call its onShowSettings
-    -- Walk UIManager's widget stack to find the ABSAudio plugin
-    -- For now, show a hint message (full wiring needs plugin reference)
-    UIManager:show(InfoMessage:new{
-        text = _("Open Settings from:\nMenu → Plugins → ABS Audio → Settings\n\nSync Now and Export Diagnostics coming in a future update."),
-        timeout = 5,
-    })
+    if _on_settings then
+        -- Close dashboard first, then open settings
+        self:onClose()
+        -- Schedule settings to open after dashboard closes
+        UIManager:scheduleIn(0.2, function()
+            _on_settings()
+        end)
+    else
+        UIManager:show(InfoMessage:new{
+            text = _("Settings not available. Open from Menu → Plugins → ABS Audio → Settings."),
+            timeout = 5,
+        })
+    end
+end
+
+function DashboardView:_onSyncNow()
+    abs_logger.info("Sync Now tapped")
+    if _on_sync_now then
+        _on_sync_now()
+    else
+        UIManager:show(InfoMessage:new{
+            text = _("Sync will be available in a future update."),
+            timeout = 3,
+        })
+    end
+end
+
+function DashboardView:_onExportDiagnostics()
+    abs_logger.info("Export Diagnostics tapped")
+    if _on_export_diagnostics then
+        _on_export_diagnostics()
+    else
+        UIManager:show(InfoMessage:new{
+            text = _("Export Diagnostics will be available in a future update."),
+            timeout = 3,
+        })
+    end
 end
 
 function DashboardView:onClose()
@@ -451,8 +514,14 @@ end
 ------------------------------------------------------------------------
 -- Public: show the dashboard
 ------------------------------------------------------------------------
-function dashboard.show()
+function dashboard.show(callbacks)
+    callbacks = callbacks or {}
     abs_logger.info("Showing dashboard")
+
+    -- Store callbacks from plugin for dashboard actions
+    _on_settings = callbacks.on_settings
+    _on_sync_now = callbacks.on_sync_now
+    _on_export_diagnostics = callbacks.on_export_diagnostics
 
     -- Initialize manifest if available
     if has_manifest then
