@@ -144,6 +144,13 @@ package.loaded["absaudio/library_browser"] = {
 package.loaded["absaudio/library_store"] = {
     wasLastFetchSuccessful = function() return true end,
 }
+package.loaded["absaudio/navigator"] = {
+    register = function() end,
+    push = function() end,
+    pop = function() end,
+    reset = function() end,
+    _reset = function() end,
+}
 
 ------------------------------------------------------------------------
 -- Require module under test
@@ -486,6 +493,52 @@ run_test("show() passes prepared data to DashboardView", function()
     mock.assert_equals(#view.dashboard_data.all_books, 1, "dashboard_data should contain prepared all_books")
 
     package.loaded["ui/uimanager"].show = orig_show
+end)
+
+-- ============================================================
+-- Test: show() returns the view widget for navigator tracking
+-- ============================================================
+run_test("show() returns the view widget for navigator tracking", function()
+    local shown_widgets = {}
+    local orig_show = package.loaded["ui/uimanager"].show
+    package.loaded["ui/uimanager"].show = function(self, widget)
+        table.insert(shown_widgets, widget)
+    end
+
+    local returned = dashboard.show({})
+
+    mock.assert_equals(returned ~= nil, true, "show should return the view widget")
+    mock.assert_equals(returned.name, "absaudio_dashboard", "returned widget should be DashboardView")
+    mock.assert_equals(returned, shown_widgets[#shown_widgets], "returned widget should be the same one shown to UIManager")
+
+    package.loaded["ui/uimanager"].show = orig_show
+end)
+
+-- ============================================================
+-- Test: _onBrowseLibrary uses nav.push instead of nested callbacks
+-- ============================================================
+run_test("_onBrowseLibrary calls nav.push('browser') instead of nested callbacks", function()
+    local pushed = {}
+    package.loaded["absaudio/navigator"].push = function(name, data)
+        table.insert(pushed, { name = name, data = data })
+    end
+
+    local shown_widgets = {}
+    local orig_show = package.loaded["ui/uimanager"].show
+    package.loaded["ui/uimanager"].show = function(self, widget)
+        table.insert(shown_widgets, widget)
+    end
+
+    dashboard.show({})
+    local view = shown_widgets[#shown_widgets]
+    view:_onBrowseLibrary()
+
+    mock.assert_equals(#pushed, 1, "should have called nav.push once")
+    mock.assert_equals(pushed[1].name, "browser", "should push 'browser' screen")
+    mock.assert_equals(type(pushed[1].data), "table", "data should be a table")
+
+    package.loaded["ui/uimanager"].show = orig_show
+    package.loaded["absaudio/navigator"].push = function() end
 end)
 
 -- ============================================================

@@ -43,6 +43,7 @@ if not has_library_browser then
 end
 
 local has_library_store, library_store = pcall(require, "absaudio/library_store")
+local has_navigator, nav = pcall(require, "absaudio/navigator")
 
 local dashboard = {}
 
@@ -467,7 +468,6 @@ end
 
 function DashboardView:_onBrowseLibrary()
     abs_logger.info("Browse Library tapped")
-    print("[ABS-DEBUG] has_library_browser=" .. tostring(has_library_browser))
     if not has_api or not api.is_configured() then
         error_handler.show("auth", "Configure your server settings first.")
         return
@@ -479,55 +479,9 @@ function DashboardView:_onBrowseLibrary()
         })
         return
     end
-
-    -- Capture settings callback and self before anything else
-    local settings_cb = self.on_settings
-    local sync_cb = self.on_sync_now
-    local export_cb = self.on_export_diagnostics
-    local dashboard_view = self
-
-    print("[ABS-DEBUG] calling library_browser.show()...")
-    library_browser.show({
-        on_back = function()
-            dashboard.show({ on_settings = settings_cb, on_sync_now = sync_cb, on_export_diagnostics = export_cb })
-        end,
-        on_book_tap = function(item)
-            local has_book_detail, book_detail = pcall(require, "absaudio/book_detail")
-            if has_book_detail then
-                book_detail.show(item, {
-                    on_back = function()
-                        library_browser.show({
-                            on_back = function()
-                                dashboard.show({ on_settings = settings_cb, on_sync_now = sync_cb, on_export_diagnostics = export_cb })
-                            end,
-                            on_book_tap = function(i)
-                                book_detail.show(i, {
-                                    on_back = function()
-                                        library_browser.show({
-                                            on_back = function()
-                                                dashboard.show({ on_settings = settings_cb, on_sync_now = sync_cb, on_export_diagnostics = export_cb })
-                                            end,
-                                        })
-                                    end,
-                                })
-                            end,
-                        })
-                    end,
-                })
-            else
-                UIManager:show(InfoMessage:new{
-                    text = _("Book details coming soon."),
-                    timeout = 3,
-                })
-            end
-        end,
-    })
-    print("[ABS-DEBUG] library_browser.show() returned, scheduling dashboard close")
-
-    -- Close dashboard AFTER library_browser.show() has set up
-    UIManager:scheduleIn(0.05, function()
-        UIManager:close(dashboard_view)
-    end)
+    if has_navigator then
+        nav.push("browser", {})
+    end
 end
 
 function DashboardView:_onOpenSettings()
@@ -593,21 +547,22 @@ end
 ------------------------------------------------------------------------
 -- Public: show the dashboard
 ------------------------------------------------------------------------
-function dashboard.show(callbacks)
-    callbacks = callbacks or {}
+function dashboard.show(data)
+    data = data or {}
     abs_logger.info("Showing dashboard")
 
     -- Prepare data (pure data, no widgets)
-    local data, err = dashboard.prepare()
+    local prepared, err = dashboard.prepare()
 
     -- Pass prepared data + callbacks through constructor
     local view = DashboardView:new{
-        dashboard_data = data or {},
-        on_settings = callbacks.on_settings,
-        on_sync_now = callbacks.on_sync_now,
-        on_export_diagnostics = callbacks.on_export_diagnostics,
+        dashboard_data = prepared or {},
+        on_settings = data.on_settings,
+        on_sync_now = data.on_sync_now,
+        on_export_diagnostics = data.on_export_diagnostics,
     }
     UIManager:show(view)
+    return view
 end
 
 return dashboard

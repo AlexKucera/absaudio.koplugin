@@ -20,6 +20,7 @@ local error_handler = require("error_handler")
 
 -- Try to load dashboard widget (may not exist yet in early dev)
 local has_dashboard, dashboard = pcall(require, "absaudio/dashboard_widget")
+local has_navigator, nav = pcall(require, "absaudio/navigator")
 
 local ABSAudio = WidgetContainer:new{
     name = "absaudio",
@@ -99,6 +100,21 @@ function ABSAudio:onABSAudioSettings()
     return true
 end
 
+--- Register all screens with the navigator
+function ABSAudio:_registerScreens()
+    if has_navigator and has_dashboard then
+        nav.register("dashboard", dashboard.show)
+    end
+    local has_browser, browser = pcall(require, "absaudio/library_browser")
+    if has_navigator and has_browser then
+        nav.register("browser", browser.show)
+    end
+    local has_detail, detail = pcall(require, "absaudio/book_detail")
+    if has_navigator and has_detail then
+        nav.register("detail", detail.show)
+    end
+end
+
 --- Open the main dashboard or settings dialog (first-run check)
 function ABSAudio:onOpenDashboard()
     abs_logger.verbose("Opening dashboard")
@@ -112,16 +128,34 @@ function ABSAudio:onOpenDashboard()
     -- Set logger level from config
     abs_logger.set_level(config.get("log_level") or "verbose")
 
+    -- Register screens with navigator
+    self:_registerScreens()
+
     -- Show dashboard after menu closes (schedule to next event loop tick)
     -- The menu calls our callback synchronously, then closes itself after.
     -- By scheduling, we ensure the menu is gone before the dashboard renders.
     if has_dashboard then
         UIManager:scheduleIn(0.1, function()
-            dashboard.show({
-                on_settings = function()
-                    self:onShowSettings()
-                end,
-            })
+            if has_navigator then
+                nav.reset("dashboard", {
+                    on_settings = function()
+                        self:onShowSettings()
+                    end,
+                    on_sync_now = function()
+                        self:onSyncNow()
+                    end,
+                    on_export_diagnostics = function()
+                        self:onExportDiagnostics()
+                    end,
+                })
+            else
+                -- Fallback: call dashboard.show directly if navigator not available
+                dashboard.show({
+                    on_settings = function()
+                        self:onShowSettings()
+                    end,
+                })
+            end
         end)
     else
         -- Dashboard not yet available — show placeholder
@@ -270,6 +304,24 @@ function ABSAudio:onSaveSettings(fields)
             error_handler.show("auth", "Connection test failed. Please verify your server URL and API token.")
         end
     end)
+end
+
+--- Sync Now handler (stub)
+function ABSAudio:onSyncNow()
+    abs_logger.info("Sync Now triggered from dashboard")
+    UIManager:show(InfoMessage:new{
+        text = _("Sync will be available in a future update."),
+        timeout = 3,
+    })
+end
+
+--- Export Diagnostics handler (stub)
+function ABSAudio:onExportDiagnostics()
+    abs_logger.info("Export Diagnostics triggered from dashboard")
+    UIManager:show(InfoMessage:new{
+        text = _("Export Diagnostics will be available in a future update."),
+        timeout = 3,
+    })
 end
 
 --- Validate credentials by calling GET /api/libraries

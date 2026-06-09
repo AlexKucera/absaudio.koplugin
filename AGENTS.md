@@ -43,6 +43,7 @@ Session logs are written to `docs/devlog/` after each completed task, issue fix,
 They capture what was done, decisions & rationale, gotchas & fixes, and next steps. Before starting a new session, read the previous session logs.
 | 2026-06-09 | issue | [issue17-dashboard-data-render-split_log.md](docs/devlog/20260609-issue17-dashboard-data-render-split_log.md) | Extracted `dashboard.prepare()` from `show()`; 4 new tests; 166 total pass |
 | 2026-06-09 | issue | [issue18-book-detail-data-render-split_log.md](docs/devlog/20260609-issue18-book-detail-data-render-split_log.md) | Extracted `detail.prepare()` from `show()`; 4 new tests; 172 total pass |
+| 2026-06-09 | issue | [issue20-main-lua-navigator-tests_log.md](docs/devlog/20260609-issue20-main-lua-navigator-tests_log.md) | Created `spec/test_main.lua` with 10 tests; navigator registration, onOpenDashboard wiring, dispatcher routing, first-run behavior; 196 total pass |
 
 <!-- write-log: session-log-index -->
 
@@ -67,7 +68,7 @@ They capture what was done, decisions & rationale, gotchas & fixes, and next ste
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **absaudio.koplugin** (328 symbols, 320 relationships, 0 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **absaudio.koplugin** (399 symbols, 397 relationships, 0 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

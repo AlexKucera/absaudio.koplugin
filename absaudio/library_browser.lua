@@ -4,8 +4,8 @@
 print("[ABS-BROWSER] module loaded (v2-synchronous)")
 --
 -- Public API:
---   browser.show(callbacks)
---     callbacks: { on_back, on_book_tap }
+--   browser.show(data)
+--     data: {} (navigation via navigator module)
 
 local Blitbuffer = require("ffi/blitbuffer")
 local BD = require("ui/bidi")
@@ -42,12 +42,13 @@ local widget_helpers = require("absaudio/widget_helpers")
 -- Try to load optional dependencies
 local has_api, api = pcall(require, "api")
 local has_cover_cache, cover_cache = pcall(require, "absaudio/cover_cache")
+local has_navigator, nav = pcall(require, "absaudio/navigator")
 
 local browser = {}
 
--- Instance state is stored on the LibraryBrowserView (self.on_back,
--- self.on_book_tap, self.current_page, self.search_query).
--- Only _view remains module-level as a reference to the active instance.
+-- Instance state is stored on the LibraryBrowserView (self.current_page,
+-- self.search_query). Only _view remains module-level as a reference to
+-- the active instance.
 local _view = nil  -- reference to current LibraryBrowserView instance
 
 
@@ -554,15 +555,11 @@ end
 
 function LibraryBrowserView:_refresh()
     -- Propagate instance state to the new view
-    local saved_on_back = self.on_back
-    local saved_on_book_tap = self.on_book_tap
     local saved_current_page = self.current_page
     local saved_search_query = self.search_query
 
     UIManager:close(self)
     _view = LibraryBrowserView:new{
-        on_back = saved_on_back,
-        on_book_tap = saved_on_book_tap,
         current_page = saved_current_page,
         search_query = saved_search_query,
     }
@@ -572,16 +569,16 @@ function LibraryBrowserView:_refresh()
 end
 
 function LibraryBrowserView:onClose()
-    if self.on_back then
-        self.on_back()
-    end
     UIManager:close(self)
+    if has_navigator then
+        nav.pop()
+    end
 end
 
 function LibraryBrowserView:onBookTap(item)
     abs_logger.info("Book tapped: " .. (item.title or item.id))
-    if self.on_book_tap then
-        self.on_book_tap(item)
+    if has_navigator then
+        nav.push("detail", { item = item })
     end
     return true
 end
@@ -684,31 +681,31 @@ end
 --- Public: show library browser
 --- Calls prepare() to fetch data, then renders the widget.
 ------------------------------------------------------------------------
-function browser.show(callbacks)
-    callbacks = callbacks or {}
+function browser.show(data)
+    data = data or {}
     _view = nil
 
     abs_logger.info("Opening library browser")
 
-    local data, err = browser.prepare()
-    if not data then
+    local prep_data, err = browser.prepare()
+    if not prep_data then
         abs_logger.warn("Library browser prepare failed: " .. (err and err.message or "unknown"))
         if err and err.type == "config" then
-            if callbacks.on_back then callbacks.on_back() end
+            if has_navigator then nav.pop() end
             return
         elseif err and err.type == "api" then
             UIManager:show(InfoMessage:new{
                 text = _("No libraries found. Check your server configuration."),
                 timeout = 3,
             })
-            if callbacks.on_back then callbacks.on_back() end
+            if has_navigator then nav.pop() end
             return
         elseif err and err.type == "network" then
             UIManager:show(InfoMessage:new{
                 text = _("Failed to load library. Check your connection."),
                 timeout = 3,
             })
-            if callbacks.on_back then callbacks.on_back() end
+            if has_navigator then nav.pop() end
             return
         else
             -- Unexpected error
@@ -716,7 +713,7 @@ function browser.show(callbacks)
                 text = _("Error loading library: ") .. tostring(err and err.message or "unknown"),
                 timeout = 5,
             })
-            if callbacks.on_back then callbacks.on_back() end
+            if has_navigator then nav.pop() end
             return
         end
     end
@@ -724,8 +721,6 @@ function browser.show(callbacks)
     -- Data ready — render the widget (pcall for widget creation errors)
     local ok, render_err = pcall(function()
         _view = LibraryBrowserView:new{
-            on_back = callbacks.on_back,
-            on_book_tap = callbacks.on_book_tap,
             current_page = 1,
             search_query = "",
         }
@@ -745,6 +740,8 @@ function browser.show(callbacks)
     if has_cover_cache then
         browser._scheduleCoverFetch()
     end
+
+    return _view
 end
 
 ------------------------------------------------------------------------

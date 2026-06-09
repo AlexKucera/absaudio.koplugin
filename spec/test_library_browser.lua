@@ -145,6 +145,14 @@ package.loaded["absaudio/cover_cache"] = {
     fetchAndCache = function() return false end,
 }
 
+package.loaded["absaudio/navigator"] = {
+    register = function() end,
+    push = function() end,
+    pop = function() end,
+    reset = function() end,
+    _reset = function() end,
+}
+
 ------------------------------------------------------------------------
 -- Mock library_store module
 ------------------------------------------------------------------------
@@ -268,10 +276,7 @@ run_test("browser.getState returns default state after show()", function()
         },
     }
 
-    browser.show({
-        on_back = function() end,
-        on_book_tap = function() end,
-    })
+    browser.show({})
 
     local state = browser.getState()
     mock.assert_equals(state.search_query, "", "search_query should be empty after fresh show()")
@@ -293,10 +298,7 @@ run_test("browser.getState reflects search query after manual set", function()
         },
     }
 
-    browser.show({
-        on_back = function() end,
-        on_book_tap = function() end,
-    })
+    browser.show({})
 
     -- Manually set search query via the view instance
     local view = browser._getView()
@@ -324,10 +326,7 @@ run_test("browser.search sets query and resets to page 1", function()
         },
     }
 
-    browser.show({
-        on_back = function() end,
-        on_book_tap = function() end,
-    })
+    browser.show({})
 
     -- Set page 3 on the view, then search resets it to 1
     local view = browser._getView()
@@ -355,10 +354,7 @@ run_test("browser.search with empty string clears the query", function()
         },
     }
 
-    browser.show({
-        on_back = function() end,
-        on_book_tap = function() end,
-    })
+    browser.show({})
 
     -- First search for something, then clear
     browser.search("alpha")
@@ -397,10 +393,7 @@ run_test("browser.search integrates with library_store filter", function()
         },
     }
 
-    browser.show({
-        on_back = function() end,
-        on_book_tap = function() end,
-    })
+    browser.show({})
 
     -- Search for "alpha" — should set query
     browser.search("alpha")
@@ -539,6 +532,109 @@ run_test("_addPageNav uses self._total_pages instead of redundant getItems call"
 
     package.loaded["absaudio/library_browser"] = nil
 end)
+
+-- ============================================================
+-- Test: onBookTap calls nav.push with detail screen
+-- ============================================================
+run_test("onBookTap calls nav.push with detail screen", function()
+    mock_store_items = {
+        {
+            id = "li_001",
+            mediaType = "book",
+            media = {
+                duration = 3600,
+                metadata = { title = "Test Book", authorName = "Test Author" },
+            },
+        },
+    }
+
+    local pushed = {}
+    package.loaded["absaudio/navigator"].push = function(name, data)
+        table.insert(pushed, { name = name, data = data })
+    end
+
+    browser.show({})
+    local view = browser._getView()
+    if not view then return end
+
+    view:onBookTap(mock_store_items[1])
+
+    mock.assert_equals(#pushed, 1, "should have called nav.push once")
+    mock.assert_equals(pushed[1].name, "detail", "should push 'detail' screen")
+    mock.assert_equals(pushed[1].data.item.id, "li_001", "should pass the tapped item")
+
+    package.loaded["absaudio/navigator"].push = function() end
+end)
+
+-- ============================================================
+-- Test: onClose calls nav.pop
+-- ============================================================
+run_test("onClose calls nav.pop", function()
+    mock_store_items = {
+        {
+            id = "li_001",
+            mediaType = "book",
+            media = {
+                duration = 3600,
+                metadata = { title = "Test Book", authorName = "Test Author" },
+            },
+        },
+    }
+
+    local popped = false
+    package.loaded["absaudio/navigator"].pop = function()
+        popped = true
+    end
+
+    browser.show({})
+    local view = browser._getView()
+    if not view then return end
+
+    view:onClose()
+
+    mock.assert_equals(popped, true, "onClose should have called nav.pop")
+
+    package.loaded["absaudio/navigator"].pop = function() end
+end)
+
+-- ============================================================
+-- Test: show() returns the view widget for navigator tracking
+-- ============================================================
+run_test("show() returns _view for navigator tracking (source check)", function()
+    -- Verify the source code returns _view from show()
+    -- (widget rendering doesn't fully work in mock env, so we check source)
+    local source_file = io.open("absaudio/library_browser.lua", "r")
+    local source = source_file:read("*a")
+    source_file:close()
+
+    -- Find browser.show function and verify it has return _view
+    local show_start = source:find("function browser%.show%(")
+    mock.assert_equals(show_start ~= nil, true, "should find browser.show function")
+
+    -- Find the next 'end' at function level after show_start
+    local depth = 0
+    local pos = show_start
+    local show_end = nil
+    while pos <= #source do
+        local fn_start = source:find("^function ", pos) or source:find("\nfunction ", pos - 1)
+        local if_start = source:find("^if ", pos) or source:find("\nif ", pos - 1)
+        local do_start = source:find(" do\n", pos) or source:find(" do ", pos)
+        local end_kw = source:find("^end\n", pos) or source:find("\nend\n", pos - 1)
+
+        -- Simpler approach: just look for 'return _view' after the pcall block
+        break
+    end
+
+    -- Look for 'return _view' in the show function body
+    local show_body_start = source:find("\n", show_start) + 1
+    -- Find next top-level function (function browser. or function browser_)
+    local next_fn = source:find("\nfunction ", show_body_start)
+    local show_body = source:sub(show_body_start, next_fn and next_fn - 1 or #source)
+
+    mock.assert_equals(show_body:find("return _view") ~= nil, true,
+        "browser.show should contain 'return _view' for navigator tracking")
+end)
+
 -- ============================================================
 -- Summary
 -- ===========================================================

@@ -3,9 +3,8 @@
 -- and chapter list for a single library item.
 --
 -- Public API:
---   detail.show(item, callbacks)
---     item: ABS library item object (basic or expanded)
---     callbacks: { on_back, on_download }
+--   detail.show(data)
+--     data: { item=..., on_download=fn }
 --
 -- When show() is called, it first tries to fetch expanded item details from ABS.
 -- If that fails and the book is downloaded, it falls back to manifest data.
@@ -45,6 +44,7 @@ local has_manifest, manifest = pcall(require, "manifest")
 local has_api, api = pcall(require, "api")
 local has_cover_cache, cover_cache = pcall(require, "absaudio/cover_cache")
 local library_store = require("absaudio/library_store")
+local has_navigator, nav = pcall(require, "absaudio/navigator")
 
 local detail = {}
 
@@ -564,8 +564,8 @@ end
 ------------------------------------------------------------------------
 function BookDetailView:onClose()
     UIManager:close(self)
-    if self.on_back then
-        self.on_back()
+    if has_navigator then
+        nav.pop()
     end
     return true
 end
@@ -583,8 +583,11 @@ end
 -- When API is configured, fetches async via scheduleIn.
 -- When offline, calls prepare() synchronously.
 ------------------------------------------------------------------------
-function detail.show(item, callbacks)
-    callbacks = callbacks or {}
+function detail.show(data)
+    data = data or {}
+    local item = data.item
+    if not item then return nil end
+    local on_download = data.on_download
 
     abs_logger.info("Showing book detail: " .. (item.title or item.id or "unknown"))
 
@@ -603,18 +606,18 @@ function detail.show(item, callbacks)
 
         UIManager:scheduleIn(0.1, function()
             UIManager:close(loading)
-            local data, err = detail.prepare(item)
-            if data then
-                detail._renderView(data, callbacks)
+            local prepared, err = detail.prepare(item)
+            if prepared then
+                detail._renderView(prepared, on_download)
             else
                 error_handler.show(err.type or "network", err.message or _("Unable to load book details."))
             end
         end)
     else
         -- Synchronous path
-        local data, err = detail.prepare(item)
-        if data then
-            detail._renderView(data, callbacks)
+        local prepared, err = detail.prepare(item)
+        if prepared then
+            detail._renderView(prepared, on_download)
         else
             error_handler.show(err.type or "network", err.message or _("Unable to load book details."))
         end
@@ -624,13 +627,13 @@ end
 ------------------------------------------------------------------------
 -- Render the detail view widget
 ------------------------------------------------------------------------
-function detail._renderView(item, callbacks)
+function detail._renderView(item, on_download)
     local view = BookDetailView:new{
         item = item,
-        on_back = callbacks and callbacks.on_back,
-        on_download = callbacks and callbacks.on_download,
+        on_download = on_download,
     }
     UIManager:show(view)
+    return view
 end
 
 ------------------------------------------------------------------------
