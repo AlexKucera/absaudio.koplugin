@@ -617,7 +617,7 @@ function detail.show(data)
                 error_handler.show(err.type or "network", err.message or _("Unable to load book details."))
             end
         end)
-        return nil  -- widget not available yet; _setCurrent updates nav async
+        return true  -- async in progress; _setCurrent updates nav later
     else
         -- Synchronous path
         local prepared, err = detail.prepare(item)

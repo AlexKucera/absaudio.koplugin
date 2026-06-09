@@ -312,6 +312,38 @@ run_test("push rollback keeps stack consistent for subsequent pops", function()
 end)
 
 -- ============================================================
+-- Test 12: push with async show_fn (returns true) does not roll back
+-- ============================================================
+run_test("push with async show_fn (returns true) preserves stack", function()
+    local widget_home = { name = "home" }
+    local widget_async = { name = "async_detail" }
+
+    nav.register("home", function() return widget_home end)
+    nav.register("async_screen", function()
+        return true  -- async in progress
+    end)
+
+    nav.push("home", {})
+    close_log = {}
+
+    -- Push async screen — should NOT roll back
+    nav.push("async_screen", {})
+    mock.assert_equals(nav._current_name(), "async_screen", "async screen should be current name")
+    mock.assert_equals(nav._current_widget(), nil, "widget should be nil until _setCurrent called")
+
+    -- Simulate async completion via _setCurrent
+    nav._setCurrent(widget_async)
+    mock.assert_equals(nav._current_widget(), widget_async, "widget should be updated after _setCurrent")
+    mock.assert_equals(nav._current_name(), "async_screen", "name should still be async_screen")
+
+    -- Pop should return to home
+    close_log = {}
+    nav.pop()
+    mock.assert_equals(nav._current_name(), "home", "pop from async screen should return to home")
+    mock.assert_equals(nav._current_widget(), widget_home, "should show home widget")
+end)
+
+-- ============================================================
 -- Summary
 -- ============================================================
 print(string.format("\n%d passed, %d failed", passed, failed))

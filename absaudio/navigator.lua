@@ -60,12 +60,17 @@ function nav.push(name, data)
         local UIManager = require("ui/uimanager")
         UIManager:close(_current)
     end
+    _current = nil  -- clear before show_fn; async screens set it later via _setCurrent
 
     -- Show the new screen
-    _current = show_fn(data)
+    -- show_fn may return:
+    --   a widget  — ready immediately
+    --   true      — async in progress, will call _setCurrent() later
+    --   nil       — failure, trigger rollback
+    local result = show_fn(data)
 
-    if _current == nil then
-        -- show_fn failed (returned nil) — rollback to previous screen
+    if result == nil then
+        -- show_fn failed — rollback to previous screen
         abs_logger.warn("navigator: show_fn for '" .. tostring(name) .. "' returned nil, rolling back")
         table.remove(_stack)
         if prev_name then
@@ -83,6 +88,12 @@ function nav.push(name, data)
         return
     end
 
+    -- For async screens (result == true), _current stays nil until
+    -- _setCurrent is called. _current_name/data are set so the stack
+    -- and pop() work correctly.
+    if result ~= true then
+        _current = result
+    end
     _current_name = name
     _current_data = data
 end
