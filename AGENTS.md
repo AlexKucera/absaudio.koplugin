@@ -41,11 +41,18 @@
 
 Session logs are written to `docs/devlog/` after each completed task, issue fix, or milestone.
 They capture what was done, decisions & rationale, gotchas & fixes, and next steps. Before starting a new session, read the previous session logs.
+| 2026-06-09 | issue | [issue17-dashboard-data-render-split_log.md](docs/devlog/20260609-issue17-dashboard-data-render-split_log.md) | Extracted `dashboard.prepare()` from `show()`; 4 new tests; 166 total pass |
+| 2026-06-09 | issue | [issue18-book-detail-data-render-split_log.md](docs/devlog/20260609-issue18-book-detail-data-render-split_log.md) | Extracted `detail.prepare()` from `show()`; 4 new tests; 172 total pass |
+| 2026-06-09 | issue | [issue20-main-lua-navigator-tests_log.md](docs/devlog/20260609-issue20-main-lua-navigator-tests_log.md) | Created `spec/test_main.lua` with 10 tests; navigator registration, onOpenDashboard wiring, dispatcher routing, first-run behavior; 196 total pass |
 
 <!-- write-log: session-log-index -->
 
 | Date | Type | File | Summary |
 |------|------|------|----------|
+| 2026-06-09 | issue | [issue19-library-browser-data-render-split_log.md](docs/devlog/20260609-issue19-library-browser-data-render-split_log.md) | Extracted `browser.prepare()` from `show()`; data/render split; eliminated redundant `getItems` in `_addPageNav`; 5 new tests; 163 total pass |
+| 2026-06-09 | issue | [issue16-shared-widget-helpers-deduplication_log.md](docs/devlog/20260609-issue16-shared-widget-helpers-deduplication_log.md) | Created `widget_helpers.lua` module; extracted triplicated `format_duration`, `format_time`, `format_file_size`, `addSeparator` from 3 widgets; removed `get_item_title`/`get_item_author` duplicates; 31 new tests; 159 total pass |
+| 2026-06-09 | issue | [issue14-book-detail-instance-state-migration_log.md](docs/devlog/20260609-issue14-book-detail-instance-state-migration_log.md) | Migrated `_on_back`/`_on_download` from module-level locals to `self.on_back`/`self.on_download` on BookDetailView; added callback isolation tests; 96 tests pass |
+| 2026-06-09 | issue | [issue12-dashboard-instance-state-migration_log.md](docs/devlog/20260609-issue12-dashboard-instance-state-migration_log.md) | Migrated `_on_settings`/`_on_sync_now`/`_on_export_diagnostics` from module-level locals to instance state on DashboardView; added callback isolation tests; 103 tests pass |
 | 2026-06-09 | issue | [issue04-acceptance-criteria-audit-gaps-closed_log.md](docs/devlog/20260609-issue04-acceptance-criteria-audit-gaps-closed_log.md) | Audited all 12 acceptance criteria; added `wasLastFetchSuccessful()` + greyed-out offline Browse Library button; created book_detail tests (9); 94 tests pass |
 | 2026-06-09 | issue | [issue04-library-browser-search-feature_log.md](docs/devlog/20260609-issue04-library-browser-search-feature_log.md) | Search feature: TDD tests, IconWidget for search button, Lua closure fix, `browser.search()` API; search filtering in emulator still broken |
 | 2026-06-09 | issue | [issue04-library-browser-search-partial-repaint-fix_log.md](docs/devlog/20260609-issue04-library-browser-search-partial-repaint-fix_log.md) | Fixed search results rendering as partial overlay; added `UIManager:setDirty("full")` in `_refresh()` |
@@ -61,7 +68,7 @@ They capture what was done, decisions & rationale, gotchas & fixes, and next ste
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **absaudio.koplugin** (328 symbols, 320 relationships, 0 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **absaudio.koplugin** (399 symbols, 397 relationships, 0 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

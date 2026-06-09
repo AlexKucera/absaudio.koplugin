@@ -3,9 +3,8 @@
 -- and chapter list for a single library item.
 --
 -- Public API:
---   detail.show(item, callbacks)
---     item: ABS library item object (basic or expanded)
---     callbacks: { on_back, on_download }
+--   detail.show(data)
+--     data: { item=..., on_download=fn }
 --
 -- When show() is called, it first tries to fetch expanded item details from ABS.
 -- If that fails and the book is downloaded, it falls back to manifest data.
@@ -38,83 +37,58 @@ local Screen = Device.screen
 local config = require("config")
 local abs_logger = require("abs_logger")
 local error_handler = require("error_handler")
+local widget_helpers = require("absaudio/widget_helpers")
 
 -- Try to load dependencies
 local has_manifest, manifest = pcall(require, "manifest")
 local has_api, api = pcall(require, "api")
 local has_cover_cache, cover_cache = pcall(require, "absaudio/cover_cache")
+local library_store = require("absaudio/library_store")
+local has_navigator, nav = pcall(require, "absaudio/navigator")
 
 local detail = {}
 
--- Callbacks passed from caller
-local _on_back = nil
-local _on_download = nil
-
 ------------------------------------------------------------------------
--- Helper: format seconds as "Xh Ym" or "Ym" or "0m"
+-- Public: prepare item data for rendering
+-- Fetches expanded details from API, falls back to manifest,
+-- or returns basic item data. Returns (data, nil) or (nil, error_info).
 ------------------------------------------------------------------------
-local function format_duration(seconds)
-    if not seconds or seconds <= 0 then return "0m" end
-    local h = math.floor(seconds / 3600)
-    local m = math.floor((seconds % 3600) / 60)
-    if h > 0 then
-        return string.format("%dh %dm", h, m)
+function detail.prepare(item)
+    -- Initialize manifest for potential fallback
+    if has_manifest then
+        manifest.init()
     end
-    return string.format("%dm", m)
+
+    -- Try API first if configured
+    if has_api and api.is_configured() then
+        local ok, expanded = api.getItemDetails(item.id)
+        if ok then
+            return detail._mergeItemData(item, expanded), nil
+        end
+        abs_logger.warn("Failed to fetch item details via API, trying fallback")
+    end
+
+    -- Try manifest fallback
+    if has_manifest then
+        local book = manifest.getBook(item.id)
+        if book then
+            return detail._itemFromManifest(item, book), nil
+        end
+    end
+
+    -- Return basic item data if it has enough info
+    if item.title or item.media then
+        abs_logger.info("prepare: returning basic item data (no API or manifest)")
+        return item, nil
+    end
+
+    -- Nothing available
+    return nil, { type = "network", message = _("Connect to WiFi to view book details.") }
 end
 
-------------------------------------------------------------------------
--- Helper: format seconds as "HH:MM:SS" or "MM:SS"
-------------------------------------------------------------------------
-local function format_time(seconds)
-    if not seconds or seconds < 0 then return "0:00" end
-    local h = math.floor(seconds / 3600)
-    local m = math.floor((seconds % 3600) / 60)
-    local s = math.floor(seconds % 60)
-    if h > 0 then
-        return string.format("%d:%02d:%02d", h, m, s)
-    end
-    return string.format("%d:%02d", m, s)
-end
 
-------------------------------------------------------------------------
--- Helper: format file size as "50 MB", "1.2 GB", etc.
-------------------------------------------------------------------------
-local function format_file_size(bytes)
-    if not bytes or bytes <= 0 then return "0 B" end
-    local units = { "B", "KB", "MB", "GB", "TB" }
-    local size = bytes
-    local unit_idx = 1
-    while size >= 1024 and unit_idx < #units do
-        size = size / 1024
-        unit_idx = unit_idx + 1
-    end
-    if unit_idx > 1 then
-        -- One decimal for KB and above
-        return string.format("%.1f %s", size, units[unit_idx])
-    end
-    return string.format("%d %s", size, units[unit_idx])
-end
 
-------------------------------------------------------------------------
--- Helper: get title from item (checks media.metadata and top-level)
-------------------------------------------------------------------------
-local function get_item_title(item)
-    if item.media and item.media.metadata and item.media.metadata.title then
-        return item.media.metadata.title
-    end
-    return item.title or _("Unknown Title")
-end
 
-------------------------------------------------------------------------
--- Helper: get author from item
-------------------------------------------------------------------------
-local function get_item_author(item)
-    if item.media and item.media.metadata and item.media.metadata.authorName then
-        return item.media.metadata.authorName
-    end
-    return item.author or ""
-end
 
 ------------------------------------------------------------------------
 -- Helper: get duration from item
@@ -188,20 +162,20 @@ function BookDetailView:init()
     -- Download status badge
     self:_addDownloadStatus()
 
-    self:_addSeparator()
+    widget_helpers.addSeparator(self.content_group, self.content_width)
 
     -- Audio files section
     local audio_files = self.item.audioFiles or {}
     if #audio_files > 0 then
         self:_addAudioFiles(audio_files)
-        self:_addSeparator()
+        widget_helpers.addSeparator(self.content_group, self.content_width)
     end
 
     -- Ebook/PDF files section
     local ebook_files = self.item.ebookFiles or {}
     if #ebook_files > 0 then
         self:_addEbookFiles(ebook_files)
-        self:_addSeparator()
+        widget_helpers.addSeparator(self.content_group, self.content_width)
     end
 
     -- Chapters section
@@ -332,8 +306,8 @@ end
 -- Metadata section: title, author, duration
 ------------------------------------------------------------------------
 function BookDetailView:_addMetadata()
-    local title = get_item_title(self.item)
-    local author = get_item_author(self.item)
+    local title = library_store.getItemTitle(self.item)
+    local author = library_store.getItemAuthor(self.item)
     local duration = get_item_duration(self.item)
 
     -- Title
@@ -362,7 +336,7 @@ function BookDetailView:_addMetadata()
     -- Duration
     if duration and duration > 0 then
         local duration_widget = TextWidget:new{
-            text = "⏱ " .. format_duration(duration),
+            text = "⏱ " .. widget_helpers.format_duration(duration),
             face = Font:getFace("cfont", 14),
             fgcolor = Blitbuffer.COLOR_DARK_GRAY,
         }
@@ -402,7 +376,7 @@ function BookDetailView:_addDownloadStatus()
         table.insert(self.content_group, badge)
 
         -- Show download button if callback provided
-        if _on_download then
+        if self.on_download then
             table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
             local download_btn = TextWidget:new{
                 text = _("⬇ Download"),
@@ -423,9 +397,10 @@ function BookDetailView:_addDownloadStatus()
             }
             tap_container.detail_ref = self.detail_ref
             local item = self.item
+            local on_download_cb = self.on_download
             function tap_container:onTapDownload()
-                if _on_download then
-                    _on_download(item)
+                if on_download_cb then
+                    on_download_cb(item)
                 end
                 return true
             end
@@ -434,20 +409,6 @@ function BookDetailView:_addDownloadStatus()
         end
     end
 
-    table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
-end
-
-------------------------------------------------------------------------
--- Separator
-------------------------------------------------------------------------
-function BookDetailView:_addSeparator()
-    table.insert(self.content_group, LineWidget:new{
-        background = Blitbuffer.COLOR_DARK_GRAY,
-        dimen = Geom:new{
-            w = self.content_width,
-            h = Size.line.thin,
-        },
-    })
     table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
 end
 
@@ -495,7 +456,7 @@ function BookDetailView:_addAudioFiles(audio_files)
             badge_prefix,
             format_str,
             file.filename or _("Unknown file"),
-            format_file_size(file.size))
+            widget_helpers.format_file_size(file.size))
 
         local file_widget = TextWidget:new{
             text = file_text,
@@ -528,7 +489,7 @@ function BookDetailView:_addEbookFiles(ebook_files)
         local file_text = string.format("  %s  %s  %s",
             format_str,
             file.filename or _("Unknown file"),
-            format_file_size(file.size))
+            widget_helpers.format_file_size(file.size))
 
         local file_widget = TextWidget:new{
             text = file_text,
@@ -551,7 +512,7 @@ function BookDetailView:_addChapters(chapters)
 
     for i, chapter in ipairs(chapters) do
         local chapter_title = chapter.title or string.format(_("Chapter %d"), i)
-        local time_range = format_time(chapter.start or 0) .. " → " .. format_time(chapter["end"] or 0)
+        local time_range = widget_helpers.format_time(chapter.start or 0) .. " → " .. widget_helpers.format_time(chapter["end"] or 0)
 
         local chapter_text = string.format("  %s\n    %s", chapter_title, time_range)
 
@@ -585,7 +546,7 @@ function BookDetailView:_addChapters(chapters)
             UIManager:show(InfoMessage:new{
                 text = string.format(_("Chapter: %s\nStart: %s"),
                     self.chapter.title or _("Untitled"),
-                    format_time(self.chapter.start)),
+                    widget_helpers.format_time(self.chapter.start)),
                 timeout = 2,
             })
             return true
@@ -602,9 +563,10 @@ end
 -- Close / navigation
 ------------------------------------------------------------------------
 function BookDetailView:onClose()
-    UIManager:close(self)
-    if _on_back then
-        _on_back()
+    if has_navigator then
+        nav.pop()              -- nav.pop() owns UIManager:close(self)
+    else
+        UIManager:close(self)   -- standalone fallback
     end
     return true
 end
@@ -618,92 +580,70 @@ end
 
 ------------------------------------------------------------------------
 -- Public: show book detail view
--- Fetches expanded item details from ABS, then displays the view.
--- Falls back to manifest data or shows error if fetch fails.
+-- Uses prepare() for data fetching, then renders the view.
+-- When API is configured, fetches async via scheduleIn.
+-- When offline, calls prepare() synchronously.
 ------------------------------------------------------------------------
-function detail.show(item, callbacks)
-    callbacks = callbacks or {}
-    _on_back = callbacks.on_back
-    _on_download = callbacks.on_download
+function detail.show(data)
+    data = data or {}
+    local item = data.item
+    if not item then return nil end
+    local on_download = data.on_download
 
     abs_logger.info("Showing book detail: " .. (item.title or item.id or "unknown"))
 
-    -- Initialize manifest
+    -- Initialize manifest for potential fallback
     if has_manifest then
         manifest.init()
     end
 
-    -- Try to fetch expanded details from API
+    -- Async path: show loading indicator, call prepare in scheduleIn
     if has_api and api.is_configured() then
-        detail._fetchAndShow(item)
+        local loading = InfoMessage:new{
+            text = _("Loading book details…"),
+            timeout = 0,  -- no auto-dismiss
+        }
+        UIManager:show(loading)
+
+        UIManager:scheduleIn(0.1, function()
+            UIManager:close(loading)
+            local prepared, err = detail.prepare(item)
+            if prepared then
+                local view = detail._renderView(prepared, on_download)
+                if has_navigator then
+                    nav._setCurrent(view)
+                end
+            else
+                error_handler.show(err.type or "network", err.message or _("Unable to load book details."))
+                if has_navigator then
+                    nav.pop()
+                end
+            end
+        end)
+        return true  -- async in progress; _setCurrent updates nav later
     else
-        -- Offline or not configured — try manifest fallback
-        detail._showFromManifestOrError(item)
-    end
-end
-
-------------------------------------------------------------------------
--- Fetch expanded details from API and show the view
-------------------------------------------------------------------------
-function detail._fetchAndShow(item)
-    -- Show loading indicator
-    local loading = InfoMessage:new{
-        text = _("Loading book details…"),
-        timeout = 0,  -- no auto-dismiss
-    }
-    UIManager:show(loading)
-
-    -- Use scheduleIn to let the loading message render before blocking
-    UIManager:scheduleIn(0.1, function()
-        local ok, expanded = api.getItemDetails(item.id)
-
-        -- Dismiss loading
-        UIManager:close(loading)
-
-        if ok then
-            -- Merge expanded data with the original item
-            local merged_item = detail._mergeItemData(item, expanded)
-            detail._renderView(merged_item)
+        -- Synchronous path
+        local prepared, err = detail.prepare(item)
+        if prepared then
+            return detail._renderView(prepared, on_download)
         else
-            abs_logger.warn("Failed to fetch item details: " .. tostring(expanded.message or "unknown"))
-            -- Fallback to manifest or show error
-            detail._showFromManifestOrError(item)
+            error_handler.show(err.type or "network", err.message or _("Unable to load book details."))
+            return nil
         end
-    end)
-end
-
-------------------------------------------------------------------------
--- Try to show from manifest data, or show error
-------------------------------------------------------------------------
-function detail._showFromManifestOrError(item)
-    if has_manifest then
-        local book = manifest.getBook(item.id)
-        if book then
-            -- Build a displayable item from manifest data
-            local manifest_item = detail._itemFromManifest(item, book)
-            detail._renderView(manifest_item)
-            return
-        end
-    end
-
-    -- No manifest data either — show what we have from the list item
-    -- (basic info from library listing) with a connection message
-    if item.title or item.media then
-        abs_logger.info("Showing limited detail from cached list data")
-        detail._renderView(item)
-    else
-        error_handler.show("network", _("Connect to WiFi to view book details."))
     end
 end
 
 ------------------------------------------------------------------------
 -- Render the detail view widget
 ------------------------------------------------------------------------
-function detail._renderView(item)
+function detail._renderView(item, on_download)
     local view = BookDetailView:new{
         item = item,
+        on_download = on_download,
     }
     UIManager:show(view)
+    UIManager:setDirty(view, "full")
+    return view
 end
 
 ------------------------------------------------------------------------

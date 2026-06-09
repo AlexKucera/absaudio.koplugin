@@ -3,7 +3,8 @@
 -- Reads real data from manifest and API modules.
 --
 -- Public API:
---   dashboard.show()  — display the dashboard
+--   dashboard.prepare()  — fetch data, returns (data, nil) or (nil, error_info)
+--   dashboard.show()     — display the dashboard
 
 local Blitbuffer = require("ffi/blitbuffer")
 local BD = require("ui/bidi")
@@ -30,6 +31,7 @@ local Screen = Device.screen
 local config = require("config")
 local abs_logger = require("abs_logger")
 local error_handler = require("error_handler")
+local widget_helpers = require("absaudio/widget_helpers")
 
 -- Try to load manifest and api
 local has_manifest, manifest = pcall(require, "manifest")
@@ -41,26 +43,33 @@ if not has_library_browser then
 end
 
 local has_library_store, library_store = pcall(require, "absaudio/library_store")
+local has_navigator, nav = pcall(require, "absaudio/navigator")
 
 local dashboard = {}
 
--- Callbacks passed from plugin (set via dashboard.show())
-local _on_settings = nil
-local _on_sync_now = nil
-local _on_export_diagnostics = nil
-
 ------------------------------------------------------------------------
--- Helper: format seconds as "Xh Ym" or "Ym" or "0m"
+-- Public: prepare dashboard data (pure data, no widgets)
 ------------------------------------------------------------------------
-local function format_duration(seconds)
-    if not seconds or seconds <= 0 then return "0m" end
-    local h = math.floor(seconds / 3600)
-    local m = math.floor((seconds % 3600) / 60)
-    if h > 0 then
-        return string.format("%dh %dm", h, m)
+function dashboard.prepare()
+    -- Initialize manifest if available
+    if has_manifest then
+        manifest.init()
     end
-    return string.format("%dm", m)
+
+    -- If manifest is not available, return error
+    if not has_manifest then
+        return nil, { type = "manifest", message = "Manifest module not available" }
+    end
+
+    local recent_book = manifest.getRecentBook()
+    local all_books = manifest.getAllBooks()
+
+    return {
+        recent_book = recent_book,
+        all_books = all_books or {},
+    }, nil
 end
+
 
 ------------------------------------------------------------------------
 -- Helper: format progress as percentage
@@ -82,6 +91,7 @@ local DashboardView = FocusManager:extend{
 }
 
 function DashboardView:init()
+    -- Callbacks are already set on self by the constructor (via dashboard.show)
     -- Store reference for tap callbacks
     self.dashboard_ref = self
 
@@ -120,19 +130,19 @@ function DashboardView:init()
     self:_addResumeSection()
 
     -- Separator
-    self:_addSeparator()
+    widget_helpers.addSeparator(self.content_group, self.content_width)
 
     -- Downloaded Books section
     self:_addDownloadedBooksSection()
 
     -- Separator
-    self:_addSeparator()
+    widget_helpers.addSeparator(self.content_group, self.content_width)
 
     -- Browse Library button
     self:_addBrowseLibraryButton()
 
     -- Separator
-    self:_addSeparator()
+    widget_helpers.addSeparator(self.content_group, self.content_width)
 
     -- Settings section
     self:_addSettingsSection()
@@ -201,17 +211,17 @@ function DashboardView:_addResumeSection()
     table.insert(self.content_group, header)
     table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
 
-    -- Get most recently played book from manifest
+    -- Get most recently played book from prepared data
     local recent_book = nil
-    if has_manifest then
-        recent_book = manifest.getRecentBook()
+    if self.dashboard_data then
+        recent_book = self.dashboard_data.recent_book
     end
 
     if recent_book and recent_book.current_time and recent_book.current_time > 0 then
         -- Show book info with resume button
         local progress_text = format_progress(recent_book.current_time, recent_book.duration)
-            .. " · " .. format_duration(recent_book.current_time)
-            .. " / " .. format_duration(recent_book.duration)
+            .. " · " .. widget_helpers.format_duration(recent_book.current_time)
+            .. " / " .. widget_helpers.format_duration(recent_book.duration)
 
         local info_text = string.format("%s\n%s\n%s\n▶ Resume",
             recent_book.title or "Unknown",
@@ -269,10 +279,10 @@ function DashboardView:_addDownloadedBooksSection()
     table.insert(self.content_group, header)
     table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
 
-    -- Get all books from manifest
+    -- Get all books from prepared data
     local books = {}
-    if has_manifest then
-        books = manifest.getAllBooks()
+    if self.dashboard_data and self.dashboard_data.all_books then
+        books = self.dashboard_data.all_books
     end
 
     if #books == 0 then
@@ -293,8 +303,8 @@ function DashboardView:_addDownloadedBooksSection()
                 progress_text = "✓ Finished"
             elseif book.duration and book.duration > 0 then
                 progress_text = format_progress(book.current_time, book.duration)
-                    .. " · " .. format_duration(book.current_time or 0)
-                    .. " / " .. format_duration(book.duration)
+                    .. " · " .. widget_helpers.format_duration(book.current_time or 0)
+                    .. " / " .. widget_helpers.format_duration(book.duration)
             else
                 progress_text = _("Not started")
             end
@@ -441,16 +451,6 @@ function DashboardView:_addActionButton(label_text, callback)
     table.insert(self.content_group, tap_container)
 end
 
-function DashboardView:_addSeparator()
-    table.insert(self.content_group, LineWidget:new{
-        background = Blitbuffer.COLOR_DARK_GRAY,
-        dimen = Geom:new{
-            w = self.content_width,
-            h = Size.line.thin,
-        },
-    })
-    table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
-end
 
 -- Actions
 
@@ -460,15 +460,14 @@ function DashboardView:_onResumeBook(book)
     UIManager:show(InfoMessage:new{
         text = string.format(_("Resume: %s\nPosition: %s / %s"),
             book.title or "Unknown",
-            format_duration(book.current_time),
-            format_duration(book.duration)),
+            widget_helpers.format_duration(book.current_time),
+            widget_helpers.format_duration(book.duration)),
         timeout = 3,
     })
 end
 
 function DashboardView:_onBrowseLibrary()
     abs_logger.info("Browse Library tapped")
-    print("[ABS-DEBUG] has_library_browser=" .. tostring(has_library_browser))
     if not has_api or not api.is_configured() then
         error_handler.show("auth", "Configure your server settings first.")
         return
@@ -480,63 +479,20 @@ function DashboardView:_onBrowseLibrary()
         })
         return
     end
-
-    -- Capture settings callback and self before anything else
-    local settings_cb = _on_settings
-    local dashboard_view = self
-
-    print("[ABS-DEBUG] calling library_browser.show()...")
-    library_browser.show({
-        on_back = function()
-            dashboard.show({ on_settings = settings_cb })
-        end,
-        on_book_tap = function(item)
-            local has_book_detail, book_detail = pcall(require, "absaudio/book_detail")
-            if has_book_detail then
-                book_detail.show(item, {
-                    on_back = function()
-                        library_browser.show({
-                            on_back = function()
-                                dashboard.show({ on_settings = settings_cb })
-                            end,
-                            on_book_tap = function(i)
-                                book_detail.show(i, {
-                                    on_back = function()
-                                        library_browser.show({
-                                            on_back = function()
-                                                dashboard.show({ on_settings = settings_cb })
-                                            end,
-                                        })
-                                    end,
-                                })
-                            end,
-                        })
-                    end,
-                })
-            else
-                UIManager:show(InfoMessage:new{
-                    text = _("Book details coming soon."),
-                    timeout = 3,
-                })
-            end
-        end,
-    })
-    print("[ABS-DEBUG] library_browser.show() returned, scheduling dashboard close")
-
-    -- Close dashboard AFTER library_browser.show() has set up
-    UIManager:scheduleIn(0.05, function()
-        UIManager:close(dashboard_view)
-    end)
+    if has_navigator then
+        nav.push("browser", {})
+    end
 end
 
 function DashboardView:_onOpenSettings()
     abs_logger.info("Settings tapped from dashboard")
-    if _on_settings then
+    if self.on_settings then
         -- Close dashboard first, then open settings
         self:onClose()
         -- Schedule settings to open after dashboard closes
+        local settings_cb = self.on_settings
         UIManager:scheduleIn(0.2, function()
-            _on_settings()
+            settings_cb()
         end)
     else
         UIManager:show(InfoMessage:new{
@@ -548,8 +504,8 @@ end
 
 function DashboardView:_onSyncNow()
     abs_logger.info("Sync Now tapped")
-    if _on_sync_now then
-        _on_sync_now()
+    if self.on_sync_now then
+        self.on_sync_now()
     else
         UIManager:show(InfoMessage:new{
             text = _("Sync will be available in a future update."),
@@ -560,8 +516,8 @@ end
 
 function DashboardView:_onExportDiagnostics()
     abs_logger.info("Export Diagnostics tapped")
-    if _on_export_diagnostics then
-        _on_export_diagnostics()
+    if self.on_export_diagnostics then
+        self.on_export_diagnostics()
     else
         UIManager:show(InfoMessage:new{
             text = _("Export Diagnostics will be available in a future update."),
@@ -591,22 +547,25 @@ end
 ------------------------------------------------------------------------
 -- Public: show the dashboard
 ------------------------------------------------------------------------
-function dashboard.show(callbacks)
-    callbacks = callbacks or {}
+function dashboard.show(data)
+    data = data or {}
     abs_logger.info("Showing dashboard")
 
-    -- Store callbacks from plugin for dashboard actions
-    _on_settings = callbacks.on_settings
-    _on_sync_now = callbacks.on_sync_now
-    _on_export_diagnostics = callbacks.on_export_diagnostics
-
-    -- Initialize manifest if available
-    if has_manifest then
-        manifest.init()
+    -- Prepare data (pure data, no widgets)
+    local prepared, err = dashboard.prepare()
+    if err then
+        abs_logger.warn("dashboard.prepare() failed: " .. tostring(err.message))
     end
 
-    local view = DashboardView:new{}
+    -- Pass prepared data + callbacks through constructor
+    local view = DashboardView:new{
+        dashboard_data = prepared or {},
+        on_settings = data.on_settings,
+        on_sync_now = data.on_sync_now,
+        on_export_diagnostics = data.on_export_diagnostics,
+    }
     UIManager:show(view)
+    return view
 end
 
 return dashboard

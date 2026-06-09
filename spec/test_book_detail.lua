@@ -101,6 +101,7 @@ package.loaded["ui/uimanager"] = {
     show = function() end,
     close = function() end,
     scheduleIn = function() end,
+    setDirty = function() end,
 }
 
 package.loaded["gettext"] = function(s) return s end
@@ -167,6 +168,15 @@ package.loaded["absaudio/cover_cache"] = {
     hasCachedCover = function() return false end,
     getCoverPath = function() return nil end,
     fetchAndCache = function() return false end,
+}
+
+-- Mock navigator
+package.loaded["absaudio/navigator"] = {
+    register = function() end,
+    push = function() end,
+    pop = function() end,
+    reset = function() end,
+    _reset = function() end,
 }
 
 ------------------------------------------------------------------------
@@ -327,8 +337,7 @@ run_test("show with API available attempts to fetch item details", function()
     }
 
     -- This should not error — it schedules async fetch via UIManager
-    detail.show(item, {
-        on_back = function() end,
+    detail.show({ item = item,
         on_download = function() end,
     })
 
@@ -350,9 +359,7 @@ run_test("show without API configured falls back to manifest/error", function()
     mock_api_configured = false
 
     -- Without API, should try manifest fallback
-    detail.show(item, {
-        on_back = function() end,
-    })
+    detail.show({ item = item })
 
     -- No error_handler.show should have been called yet because item has title/media
     -- (it shows the limited data from list item)
@@ -371,9 +378,7 @@ run_test("show without API and without manifest data shows WiFi message", functi
     mock_api_configured = false
     mock_manifest_books = {}  -- no manifest data
 
-    detail.show(item, {
-        on_back = function() end,
-    })
+    detail.show({ item = item })
 
     -- Should have called error_handler.show with network error
     mock.assert_equals(#error_handler_calls, 1, "should show exactly one error")
@@ -406,9 +411,7 @@ run_test("show without API falls back to manifest data when available", function
     }
 
     -- Should not error — it renders the view from manifest data
-    detail.show(item, {
-        on_back = function() end,
-    })
+    detail.show({ item = item })
 
     mock.assert_equals(#error_handler_calls, 0, "should not show error when manifest data available")
 end)
@@ -429,12 +432,198 @@ run_test("show with item title but no manifest shows limited data (no error)", f
     mock_api_configured = false
     mock_manifest_books = {}
 
-    detail.show(item, {
-        on_back = function() end,
-    })
+    detail.show({ item = item })
 
     -- Has title/media so should NOT show error
     mock.assert_equals(#error_handler_calls, 0, "should not show error when item has title and media")
+end)
+
+run_test("onClose calls nav.pop() for back navigation", function()
+    local popped = false
+    package.loaded["absaudio/navigator"].pop = function()
+        popped = true
+    end
+
+    local shown_widgets = {}
+    local orig_show = package.loaded["ui/uimanager"].show
+    package.loaded["ui/uimanager"].show = function(self, widget)
+        table.insert(shown_widgets, widget)
+    end
+
+    local item = {
+        id = "item_nav",
+        title = "Nav Book",
+        mediaType = "book",
+        media = { duration = 3600 },
+    }
+
+    mock_api_configured = false
+    mock_manifest_books = {}
+
+    detail.show({ item = item })
+
+    local view = shown_widgets[#shown_widgets]
+    mock.assert_equals(view ~= nil, true, "should have created a view widget")
+
+    view:onClose()
+    mock.assert_equals(popped, true, "onClose should have called nav.pop()")
+
+    package.loaded["ui/uimanager"].show = orig_show
+    package.loaded["absaudio/navigator"].pop = function() end
+end)
+
+-- ============================================================
+-- Test: on_download callback reads from instance state
+-- ============================================================
+run_test("on_download callback uses instance state", function()
+    local downloaded_item = nil
+
+    -- Capture instances
+    local shown_widgets = {}
+    local orig_show = package.loaded["ui/uimanager"].show
+    package.loaded["ui/uimanager"].show = function(self, widget)
+        table.insert(shown_widgets, widget)
+    end
+
+    local item = {
+        id = "item_dl",
+        title = "Downloadable Book",
+        mediaType = "book",
+        media = { duration = 3600 },
+    }
+
+    mock_api_configured = false
+    mock_manifest_books = {}  -- not downloaded, so download button appears
+
+    detail.show({
+        item = item,
+        on_download = function(it) downloaded_item = it end,
+    })
+
+    local view = shown_widgets[#shown_widgets]
+    mock.assert_equals(view ~= nil, true, "should have created a view widget")
+
+    -- The download button tap container should reference the view's on_download
+    -- Simulate finding and invoking the download tap handler
+    -- We verify it by checking self.on_download is set on the instance
+    mock.assert_equals(type(view.on_download), "function", "view should have on_download function")
+
+    -- Call on_download directly to verify it uses the instance's callback
+    view.on_download(item)
+    mock.assert_equals(downloaded_item ~= nil, true, "on_download callback should have been invoked")
+    mock.assert_equals(downloaded_item.id, "item_dl", "on_download should receive correct item")
+
+    -- Restore
+    package.loaded["ui/uimanager"].show = orig_show
+end)
+
+-- ============================================================
+-- Test: detail.prepare() returns merged data when API succeeds
+-- ============================================================
+run_test("prepare() returns merged data when API succeeds", function()
+    local item = {
+        id = "item_prepare_ok",
+        title = "Base Title",
+        mediaType = "book",
+        addedAt = 1000,
+        media = { duration = 3600 },
+    }
+
+    mock_api_configured = true
+    mock_api_item_details_ok = true
+    mock_api_item_details_data = {
+        audioFiles = {
+            { filename = "book.m4b", format = "m4b", size = 52428800 },
+        },
+        ebookFiles = {},
+        media = { chapters = { { title = "Chapter 1", start = 0, ["end"] = 3600 } } },
+    }
+    mock_manifest_books = {}
+
+    local data, err = detail.prepare(item)
+
+    mock.assert_equals(data ~= nil, true, "should return data on success")
+    mock.assert_equals(err, nil, "should return nil error on success")
+    mock.assert_equals(data.id, "item_prepare_ok", "should preserve base id")
+    mock.assert_equals(data.title, "Base Title", "should preserve base title")
+    mock.assert_equals(#data.audioFiles, 1, "should have merged audioFiles from expanded")
+    mock.assert_equals(data.audioFiles[1].format, "m4b", "audio file format should be m4b")
+    mock.assert_equals(data.mediaType, "book", "should preserve base mediaType")
+end)
+
+-- ============================================================
+-- Test: detail.prepare() falls back to manifest when API fails
+-- ============================================================
+run_test("prepare() falls back to manifest when API fails", function()
+    local item = {
+        id = "item_manifest_fallback",
+        title = "Base Title",
+        mediaType = "book",
+        addedAt = 1000,
+    }
+
+    mock_api_configured = true
+    mock_api_item_details_ok = false
+    mock_manifest_books = {
+        ["item_manifest_fallback"] = {
+            abs_item_id = "item_manifest_fallback",
+            title = "Manifest Title",
+            author = "Author Name",
+            duration = 7200,
+        },
+    }
+
+    local data, err = detail.prepare(item)
+
+    mock.assert_equals(data ~= nil, true, "should return data on manifest fallback")
+    mock.assert_equals(err, nil, "should return nil error on manifest fallback")
+    mock.assert_equals(data.id, "item_manifest_fallback", "should preserve base id")
+    mock.assert_equals(data.title, "Manifest Title", "should use manifest title")
+    mock.assert_equals(data.author, "Author Name", "should use manifest author")
+    mock.assert_equals(data.media.duration, 7200, "should use manifest duration in media table")
+end)
+
+-- ============================================================
+-- Test: detail.prepare() returns error when API fails, no manifest
+-- ============================================================
+run_test("prepare() returns error when API fails and no manifest", function()
+    local item = {
+        id = "item_no_data",
+        mediaType = "book",
+        addedAt = 1000,
+    }
+
+    mock_api_configured = true
+    mock_api_item_details_ok = false
+    mock_manifest_books = {}
+
+    local data, err = detail.prepare(item)
+
+    mock.assert_equals(data, nil, "should return nil data")
+    mock.assert_equals(err ~= nil, true, "should return error info")
+    mock.assert_equals(err.type, "network", "error type should be network")
+end)
+
+-- ============================================================
+-- Test: detail.prepare() returns basic item when offline with title
+-- ============================================================
+run_test("prepare() returns basic item when offline but item has title/media", function()
+    local item = {
+        id = "item_offline_basic",
+        title = "Offline Book",
+        mediaType = "book",
+        media = { duration = 1800 },
+    }
+
+    mock_api_configured = false
+    mock_manifest_books = {}
+
+    local data, err = detail.prepare(item)
+
+    mock.assert_equals(data ~= nil, true, "should return data")
+    mock.assert_equals(err, nil, "should not return error")
+    mock.assert_equals(data.title, "Offline Book", "should preserve title")
+    mock.assert_equals(data.media.duration, 1800, "should preserve media duration")
 end)
 
 -- ============================================================

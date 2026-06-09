@@ -5,14 +5,34 @@ All notable changes to this project will be documented in this file. The format 
 ## [Unreleased]
 
 ### feat
+### fix
+
+- **nav:** defer closing previous widget until new one is ready — eliminate flash of KOReader file browser during async screen transitions (e.g., library → book detail)
+- **book-detail:** call `nav.pop()` when async `detail.prepare()` fails so navigator restores library browser instead of leaving user on blank screen
+- **nav:** prevent state corruption when `browser.show()` fails inside `nav.push()` — show_fn returning nil now triggers automatic rollback to previous screen instead of leaving navigator with a nil widget and wrong screen name
+- **api:** guard `request_with_retry` on `transport` nil instead of `socket_http_ok` — prevent nil dereference when `api.init()` was never called
+- **dashboard:** log warning when `prepare()` fails instead of silently discarding the error
+- **library-browser:** remove stray `print()` that appeared in production logs on every module load
+- **book-detail:** return widget from `detail.show()` so navigator can track and close the detail screen; fix widget leak on every Back press
+- **nav:** prevent state corruption when `browser.show()` fails inside `nav.push()` — show_fn returning nil now triggers automatic rollback to previous screen instead of leaving navigator with a nil widget and wrong screen name
+- **api:** guard `request_with_retry` on `transport` nil instead of `socket_http_ok` — prevent nil dereference when `api.init()` was never called
+- **dashboard:** log warning when `prepare()` fails instead of silently discarding the error
+- **library-browser:** remove stray `print()` that appeared in production logs on every module load
 
 - **library-browser:** expose search feature with magnifying glass icon button, InputDialog, and `browser.search()` API; show active query text next to icon
+- **dashboard:** extract `prepare()` function separating data fetching from widget rendering; add 4 tests for pure-data paths
+- **library-browser:** extract `browser.prepare()` for data/render split; add 4 tests covering config/api/network error paths
+- **book-detail:** extract `detail.prepare()` with API→manifest→basic fallback chain; add 3 tests for success, fallback, and error
 - **dashboard:** grey out Browse Library button when offline (last fetch failed) or API not configured; show reason text beneath button; add `wasLastFetchSuccessful()` tri-state to library_store
 - **book-detail:** add offline fallback path — manifest data for downloaded books, WiFi message for undownloaded; add 9 unit tests covering merge, manifest fallback, and error paths
 
 ### fix
 
 - **library-browser:** fix Lua closure scoping in onSearch — split `local x = expr` into `local x; x = expr` so closures in button callbacks can capture the upvalue
+- **nav:** fix double-close in LibraryBrowserView:onClose() and BookDetailView:onClose() — both called UIManager:close(self) then nav.pop() which also closes the widget; let nav.pop() own the close when navigator is active
+- **nav:** fix stale navigator reference after LibraryBrowserView:_refresh() recreates widget — add nav._setCurrent() helper so pop() targets the live widget instead of the closed one
+
+- **settings:** guard onSaveSettings against nil fields on shutdown — prevents crash when closing emulator or KOReader broadcasts CloseWidget without dialog arguments
 
 - **library-browser:** DPI-scale cover thumbnails, compute dynamic page size from screen dimensions, fetch all covers upfront with persistent cache, add clear-cache button in settings
 
