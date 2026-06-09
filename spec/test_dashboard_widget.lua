@@ -394,6 +394,101 @@ run_test("_onExportDiagnostics uses instance callback from self.on_export_diagno
 end)
 
 -- ============================================================
+-- Tests: dashboard.prepare() — data/render split
+-- ============================================================
+
+-- Helper: set up mock manifest with specific data
+local function setup_manifest_mock(recent_book, all_books)
+    package.loaded["manifest"] = {
+        init = function() end,
+        getRecentBook = function() return recent_book end,
+        getAllBooks = function() return all_books end,
+    }
+end
+
+run_test("prepare() returns data with recent_book and all_books when manifest has books", function()
+    local test_book = {
+        title = "Test Book",
+        author = "Test Author",
+        current_time = 120,
+        duration = 3600,
+    }
+    local all_books = {
+        test_book,
+        { title = "Book 2", author = "Author 2" },
+    }
+    setup_manifest_mock(test_book, all_books)
+
+    -- Reload the module to pick up new manifest mock
+    package.loaded["absaudio/dashboard_widget"] = nil
+    local dash = require("absaudio/dashboard_widget")
+
+    local data, err = dash.prepare()
+
+    mock.assert_equals(err, nil, "should not return error")
+    mock.assert_equals(data ~= nil, true, "should return data table")
+    mock.assert_equals(data.recent_book.title, "Test Book", "recent_book should match")
+    mock.assert_equals(#data.all_books, 2, "all_books should have 2 entries")
+end)
+
+run_test("prepare() returns empty-but-valid data when manifest is empty", function()
+    setup_manifest_mock(nil, {})  -- no recent book, no books
+
+    package.loaded["absaudio/dashboard_widget"] = nil
+    local dash = require("absaudio/dashboard_widget")
+
+    local data, err = dash.prepare()
+
+    mock.assert_equals(err, nil, "should not return error")
+    mock.assert_equals(data ~= nil, true, "should return data table")
+    mock.assert_equals(data.recent_book, nil, "recent_book should be nil")
+    mock.assert_equals(#data.all_books, 0, "all_books should be empty array")
+end)
+
+run_test("prepare() handles manifest not available gracefully", function()
+    -- Set manifest to nil to simulate it not being available
+    package.loaded["manifest"] = nil
+
+    package.loaded["absaudio/dashboard_widget"] = nil
+    local dash = require("absaudio/dashboard_widget")
+
+    local data, err = dash.prepare()
+
+    mock.assert_equals(data, nil, "should not return data")
+    mock.assert_equals(err ~= nil, true, "should return error info")
+    mock.assert_equals(err.type, "manifest", "error type should be manifest")
+end)
+
+run_test("show() passes prepared data to DashboardView", function()
+    local test_book = {
+        title = "Prepared Book",
+        author = "Prepared Author",
+        current_time = 500,
+        duration = 7200,
+    }
+    setup_manifest_mock(test_book, { test_book })
+
+    package.loaded["absaudio/dashboard_widget"] = nil
+    local dash = require("absaudio/dashboard_widget")
+
+    local shown_widgets = {}
+    local orig_show = package.loaded["ui/uimanager"].show
+    package.loaded["ui/uimanager"].show = function(self, widget)
+        table.insert(shown_widgets, widget)
+    end
+
+    dash.show({})
+
+    mock.assert_equals(#shown_widgets, 1, "should have shown one widget")
+    local view = shown_widgets[1]
+    mock.assert_equals(view.dashboard_data ~= nil, true, "view should have dashboard_data")
+    mock.assert_equals(view.dashboard_data.recent_book.title, "Prepared Book", "dashboard_data should contain prepared recent_book")
+    mock.assert_equals(#view.dashboard_data.all_books, 1, "dashboard_data should contain prepared all_books")
+
+    package.loaded["ui/uimanager"].show = orig_show
+end)
+
+-- ============================================================
 -- Summary
 -- ============================================================
 print(string.format("\n%d passed, %d failed", passed, failed))

@@ -48,6 +48,44 @@ local library_store = require("absaudio/library_store")
 
 local detail = {}
 
+------------------------------------------------------------------------
+-- Public: prepare item data for rendering
+-- Fetches expanded details from API, falls back to manifest,
+-- or returns basic item data. Returns (data, nil) or (nil, error_info).
+------------------------------------------------------------------------
+function detail.prepare(item)
+    -- Initialize manifest for potential fallback
+    if has_manifest then
+        manifest.init()
+    end
+
+    -- Try API first if configured
+    if has_api and api.is_configured() then
+        local ok, expanded = api.getItemDetails(item.id)
+        if ok then
+            return detail._mergeItemData(item, expanded), nil
+        end
+        abs_logger.warn("Failed to fetch item details via API, trying fallback")
+    end
+
+    -- Try manifest fallback
+    if has_manifest then
+        local book = manifest.getBook(item.id)
+        if book then
+            return detail._itemFromManifest(item, book), nil
+        end
+    end
+
+    -- Return basic item data if it has enough info
+    if item.title or item.media then
+        abs_logger.info("prepare: returning basic item data (no API or manifest)")
+        return item, nil
+    end
+
+    -- Nothing available
+    return nil, { type = "network", message = _("Connect to WiFi to view book details.") }
+end
+
 
 
 
@@ -541,79 +579,45 @@ end
 
 ------------------------------------------------------------------------
 -- Public: show book detail view
--- Fetches expanded item details from ABS, then displays the view.
--- Falls back to manifest data or shows error if fetch fails.
+-- Uses prepare() for data fetching, then renders the view.
+-- When API is configured, fetches async via scheduleIn.
+-- When offline, calls prepare() synchronously.
 ------------------------------------------------------------------------
 function detail.show(item, callbacks)
     callbacks = callbacks or {}
 
     abs_logger.info("Showing book detail: " .. (item.title or item.id or "unknown"))
 
-    -- Initialize manifest
+    -- Initialize manifest for potential fallback
     if has_manifest then
         manifest.init()
     end
 
-    -- Try to fetch expanded details from API
+    -- Async path: show loading indicator, call prepare in scheduleIn
     if has_api and api.is_configured() then
-        detail._fetchAndShow(item, callbacks)
+        local loading = InfoMessage:new{
+            text = _("Loading book details…"),
+            timeout = 0,  -- no auto-dismiss
+        }
+        UIManager:show(loading)
+
+        UIManager:scheduleIn(0.1, function()
+            UIManager:close(loading)
+            local data, err = detail.prepare(item)
+            if data then
+                detail._renderView(data, callbacks)
+            else
+                error_handler.show(err.type or "network", err.message or _("Unable to load book details."))
+            end
+        end)
     else
-        -- Offline or not configured — try manifest fallback
-        detail._showFromManifestOrError(item, callbacks)
-    end
-end
-
-------------------------------------------------------------------------
--- Fetch expanded details from API and show the view
-------------------------------------------------------------------------
-function detail._fetchAndShow(item, callbacks)
-    -- Show loading indicator
-    local loading = InfoMessage:new{
-        text = _("Loading book details…"),
-        timeout = 0,  -- no auto-dismiss
-    }
-    UIManager:show(loading)
-
-    -- Use scheduleIn to let the loading message render before blocking
-    UIManager:scheduleIn(0.1, function()
-        local ok, expanded = api.getItemDetails(item.id)
-
-        -- Dismiss loading
-        UIManager:close(loading)
-
-        if ok then
-            -- Merge expanded data with the original item
-            local merged_item = detail._mergeItemData(item, expanded)
-            detail._renderView(merged_item, callbacks)
+        -- Synchronous path
+        local data, err = detail.prepare(item)
+        if data then
+            detail._renderView(data, callbacks)
         else
-            abs_logger.warn("Failed to fetch item details: " .. tostring(expanded.message or "unknown"))
-            -- Fallback to manifest or show error
-            detail._showFromManifestOrError(item, callbacks)
+            error_handler.show(err.type or "network", err.message or _("Unable to load book details."))
         end
-    end)
-end
-
-------------------------------------------------------------------------
--- Try to show from manifest data, or show error
-------------------------------------------------------------------------
-function detail._showFromManifestOrError(item, callbacks)
-    if has_manifest then
-        local book = manifest.getBook(item.id)
-        if book then
-            -- Build a displayable item from manifest data
-            local manifest_item = detail._itemFromManifest(item, book)
-            detail._renderView(manifest_item, callbacks)
-            return
-        end
-    end
-
-    -- No manifest data either — show what we have from the list item
-    -- (basic info from library listing) with a connection message
-    if item.title or item.media then
-        abs_logger.info("Showing limited detail from cached list data")
-        detail._renderView(item, callbacks)
-    else
-        error_handler.show("network", _("Connect to WiFi to view book details."))
     end
 end
 

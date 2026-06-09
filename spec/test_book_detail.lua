@@ -550,6 +550,115 @@ run_test("on_download callback uses instance state", function()
 end)
 
 -- ============================================================
+-- Test: detail.prepare() returns merged data when API succeeds
+-- ============================================================
+run_test("prepare() returns merged data when API succeeds", function()
+    local item = {
+        id = "item_prepare_ok",
+        title = "Base Title",
+        mediaType = "book",
+        addedAt = 1000,
+        media = { duration = 3600 },
+    }
+
+    mock_api_configured = true
+    mock_api_item_details_ok = true
+    mock_api_item_details_data = {
+        audioFiles = {
+            { filename = "book.m4b", format = "m4b", size = 52428800 },
+        },
+        ebookFiles = {},
+        media = { chapters = { { title = "Chapter 1", start = 0, ["end"] = 3600 } } },
+    }
+    mock_manifest_books = {}
+
+    local data, err = detail.prepare(item)
+
+    mock.assert_equals(data ~= nil, true, "should return data on success")
+    mock.assert_equals(err, nil, "should return nil error on success")
+    mock.assert_equals(data.id, "item_prepare_ok", "should preserve base id")
+    mock.assert_equals(data.title, "Base Title", "should preserve base title")
+    mock.assert_equals(#data.audioFiles, 1, "should have merged audioFiles from expanded")
+    mock.assert_equals(data.audioFiles[1].format, "m4b", "audio file format should be m4b")
+    mock.assert_equals(data.mediaType, "book", "should preserve base mediaType")
+end)
+
+-- ============================================================
+-- Test: detail.prepare() falls back to manifest when API fails
+-- ============================================================
+run_test("prepare() falls back to manifest when API fails", function()
+    local item = {
+        id = "item_manifest_fallback",
+        title = "Base Title",
+        mediaType = "book",
+        addedAt = 1000,
+    }
+
+    mock_api_configured = true
+    mock_api_item_details_ok = false
+    mock_manifest_books = {
+        ["item_manifest_fallback"] = {
+            abs_item_id = "item_manifest_fallback",
+            title = "Manifest Title",
+            author = "Author Name",
+            duration = 7200,
+        },
+    }
+
+    local data, err = detail.prepare(item)
+
+    mock.assert_equals(data ~= nil, true, "should return data on manifest fallback")
+    mock.assert_equals(err, nil, "should return nil error on manifest fallback")
+    mock.assert_equals(data.id, "item_manifest_fallback", "should preserve base id")
+    mock.assert_equals(data.title, "Manifest Title", "should use manifest title")
+    mock.assert_equals(data.author, "Author Name", "should use manifest author")
+    mock.assert_equals(data.media.duration, 7200, "should use manifest duration in media table")
+end)
+
+-- ============================================================
+-- Test: detail.prepare() returns error when API fails, no manifest
+-- ============================================================
+run_test("prepare() returns error when API fails and no manifest", function()
+    local item = {
+        id = "item_no_data",
+        mediaType = "book",
+        addedAt = 1000,
+    }
+
+    mock_api_configured = true
+    mock_api_item_details_ok = false
+    mock_manifest_books = {}
+
+    local data, err = detail.prepare(item)
+
+    mock.assert_equals(data, nil, "should return nil data")
+    mock.assert_equals(err ~= nil, true, "should return error info")
+    mock.assert_equals(err.type, "network", "error type should be network")
+end)
+
+-- ============================================================
+-- Test: detail.prepare() returns basic item when offline with title
+-- ============================================================
+run_test("prepare() returns basic item when offline but item has title/media", function()
+    local item = {
+        id = "item_offline_basic",
+        title = "Offline Book",
+        mediaType = "book",
+        media = { duration = 1800 },
+    }
+
+    mock_api_configured = false
+    mock_manifest_books = {}
+
+    local data, err = detail.prepare(item)
+
+    mock.assert_equals(data ~= nil, true, "should return data")
+    mock.assert_equals(err, nil, "should not return error")
+    mock.assert_equals(data.title, "Offline Book", "should preserve title")
+    mock.assert_equals(data.media.duration, 1800, "should preserve media duration")
+end)
+
+-- ============================================================
 -- Summary
 -- ============================================================
 print(string.format("\n%d passed, %d failed", passed, failed))

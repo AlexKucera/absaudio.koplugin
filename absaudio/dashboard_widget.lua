@@ -3,7 +3,8 @@
 -- Reads real data from manifest and API modules.
 --
 -- Public API:
---   dashboard.show()  — display the dashboard
+--   dashboard.prepare()  — fetch data, returns (data, nil) or (nil, error_info)
+--   dashboard.show()     — display the dashboard
 
 local Blitbuffer = require("ffi/blitbuffer")
 local BD = require("ui/bidi")
@@ -44,6 +45,29 @@ end
 local has_library_store, library_store = pcall(require, "absaudio/library_store")
 
 local dashboard = {}
+
+------------------------------------------------------------------------
+-- Public: prepare dashboard data (pure data, no widgets)
+------------------------------------------------------------------------
+function dashboard.prepare()
+    -- Initialize manifest if available
+    if has_manifest then
+        manifest.init()
+    end
+
+    -- If manifest is not available, return error
+    if not has_manifest then
+        return nil, { type = "manifest", message = "Manifest module not available" }
+    end
+
+    local recent_book = manifest.getRecentBook()
+    local all_books = manifest.getAllBooks()
+
+    return {
+        recent_book = recent_book,
+        all_books = all_books or {},
+    }, nil
+end
 
 
 ------------------------------------------------------------------------
@@ -186,10 +210,10 @@ function DashboardView:_addResumeSection()
     table.insert(self.content_group, header)
     table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
 
-    -- Get most recently played book from manifest
+    -- Get most recently played book from prepared data
     local recent_book = nil
-    if has_manifest then
-        recent_book = manifest.getRecentBook()
+    if self.dashboard_data then
+        recent_book = self.dashboard_data.recent_book
     end
 
     if recent_book and recent_book.current_time and recent_book.current_time > 0 then
@@ -254,10 +278,10 @@ function DashboardView:_addDownloadedBooksSection()
     table.insert(self.content_group, header)
     table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
 
-    -- Get all books from manifest
+    -- Get all books from prepared data
     local books = {}
-    if has_manifest then
-        books = manifest.getAllBooks()
+    if self.dashboard_data and self.dashboard_data.all_books then
+        books = self.dashboard_data.all_books
     end
 
     if #books == 0 then
@@ -573,13 +597,12 @@ function dashboard.show(callbacks)
     callbacks = callbacks or {}
     abs_logger.info("Showing dashboard")
 
-    -- Initialize manifest if available
-    if has_manifest then
-        manifest.init()
-    end
+    -- Prepare data (pure data, no widgets)
+    local data, err = dashboard.prepare()
 
-    -- Pass callbacks through constructor so the instance owns them from creation
+    -- Pass prepared data + callbacks through constructor
     local view = DashboardView:new{
+        dashboard_data = data or {},
         on_settings = callbacks.on_settings,
         on_sync_now = callbacks.on_sync_now,
         on_export_diagnostics = callbacks.on_export_diagnostics,

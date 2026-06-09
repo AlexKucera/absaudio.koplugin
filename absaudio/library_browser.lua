@@ -443,14 +443,10 @@ end
 -- Page navigation bar (Prev / Page X of Y / Next)
 -----------------------------------------------------------------------
 function LibraryBrowserView:_addPageNav()
-    local result = library_store.getItems({
-        page = self.current_page,
-        per_page = self:_getPerPage(),
-        search = self.search_query,
-    })
+    local total_pages = self._total_pages or 1
 
     -- Only show page nav when there's more than one page
-    if result.total_pages <= 1 then return end
+    if total_pages <= 1 then return end
 
     local nav_height = Size.padding.large * 2 + 30
 
@@ -650,87 +646,104 @@ function LibraryBrowserView:onSearch()
     input_dialog:onShowKeyboard()
 end
 ------------------------------------------------------------------------
+--- Public: prepare library data (data/render split)
+--- Handles API config check, getLibraries, fetchAll, cover cache init.
+--- @return table|nil  data ({library_id=...}) on success, nil on failure
+--- @return table|nil  error_info ({type=..., message=...}) on failure, nil on success
+------------------------------------------------------------------------
+function browser.prepare()
+    if not has_api or not api.is_configured() then
+        return nil, { type = "config", message = "API not configured" }
+    end
+
+    local api_ok, data = api.getLibraries()
+    local libraries = (data and data.libraries) or {}
+
+    if not api_ok or #libraries == 0 then
+        return nil, { type = "api", message = "No libraries found" }
+    end
+
+    local library_id = libraries[1].id
+
+    local fetch_ok, fetch_err = library_store.fetchAll(library_id)
+    if not fetch_ok then
+        return nil, { type = "network", message = "Failed to load library", detail = fetch_err }
+    end
+
+    -- Initialize cover cache
+    if has_cover_cache then
+        local DataStorage = require("datastorage")
+        local cache_dir = DataStorage:getSettingsDir() .. "/absaudio_covers"
+        cover_cache.init(cache_dir)
+    end
+
+    return { library_id = library_id }
+end
+
+------------------------------------------------------------------------
 --- Public: show library browser
---- Fetches the first ABS library, loads items, and displays the browser.
+--- Calls prepare() to fetch data, then renders the widget.
 ------------------------------------------------------------------------
 function browser.show(callbacks)
     callbacks = callbacks or {}
     _view = nil
 
-    print("[ABS-BROWSER] show() called")
     abs_logger.info("Opening library browser")
 
-    -- First, we need to get the library ID
-    if not has_api or not api.is_configured() then
-        print("[ABS-BROWSER] api not configured, calling on_back")
-        if callbacks.on_back then callbacks.on_back() end
-        return
-    end
-
-    -- Do everything synchronously
-    local ok, err = pcall(function()
-        print("[ABS-BROWSER] inside pcall, fetching libraries...")
-        local api_ok, data = api.getLibraries()
-        local libraries = (data and data.libraries) or {}
-        print("[ABS-BROWSER] libraries response: ok=" .. tostring(api_ok) .. " count=" .. #libraries)
-
-        if not api_ok or #libraries == 0 then
-            print("[ABS-BROWSER] no libraries found")
+    local data, err = browser.prepare()
+    if not data then
+        abs_logger.warn("Library browser prepare failed: " .. (err and err.message or "unknown"))
+        if err and err.type == "config" then
+            if callbacks.on_back then callbacks.on_back() end
+            return
+        elseif err and err.type == "api" then
             UIManager:show(InfoMessage:new{
                 text = _("No libraries found. Check your server configuration."),
                 timeout = 3,
             })
             if callbacks.on_back then callbacks.on_back() end
             return
-        end
-
-        local library_id = libraries[1].id
-        print("[ABS-BROWSER] using library: " .. tostring(library_id))
-
-        -- Fetch all items from this library
-        local fetch_ok, fetch_err = library_store.fetchAll(library_id)
-        print("[ABS-BROWSER] fetchAll result: ok=" .. tostring(fetch_ok))
-
-        if not fetch_ok then
-            print("[ABS-BROWSER] fetchAll failed: " .. tostring(fetch_err))
+        elseif err and err.type == "network" then
             UIManager:show(InfoMessage:new{
                 text = _("Failed to load library. Check your connection."),
                 timeout = 3,
             })
             if callbacks.on_back then callbacks.on_back() end
             return
+        else
+            -- Unexpected error
+            UIManager:show(InfoMessage:new{
+                text = _("Error loading library: ") .. tostring(err and err.message or "unknown"),
+                timeout = 5,
+            })
+            if callbacks.on_back then callbacks.on_back() end
+            return
         end
+    end
 
-        print("[ABS-BROWSER] initializing cover cache...")
-        if has_cover_cache then
-            local DataStorage = require("datastorage")
-            local cache_dir = DataStorage:getSettingsDir() .. "/absaudio_covers"
-            cover_cache.init(cache_dir)
-        end
-
-        print("[ABS-BROWSER] creating LibraryBrowserView...")
+    -- Data ready — render the widget (pcall for widget creation errors)
+    local ok, render_err = pcall(function()
         _view = LibraryBrowserView:new{
             on_back = callbacks.on_back,
             on_book_tap = callbacks.on_book_tap,
             current_page = 1,
             search_query = "",
         }
-        print("[ABS-BROWSER] showing view...")
         UIManager:show(_view)
-        print("[ABS-BROWSER] view shown!")
-
-        -- Schedule batch cover fetch + refresh for current page
-        if has_cover_cache then
-            browser._scheduleCoverFetch()
-        end
     end)
 
     if not ok then
-        print("[ABS-BROWSER] pcall FAILED: " .. tostring(err))
+        abs_logger.warn("Library browser render failed: " .. tostring(render_err))
         UIManager:show(InfoMessage:new{
-            text = _("Error loading library: ") .. tostring(err),
+            text = _("Error rendering library: ") .. tostring(render_err),
             timeout = 5,
         })
+        return
+    end
+
+    -- Schedule batch cover fetch + refresh for current page
+    if has_cover_cache then
+        browser._scheduleCoverFetch()
     end
 end
 

@@ -423,8 +423,125 @@ run_test("browser.search integrates with library_store filter", function()
 end)
 
 -- ============================================================
--- Summary
+-- Test: browser.prepare() returns data when API calls succeed
 -- ============================================================
+run_test("browser.prepare() returns data when API calls succeed", function()
+    local data, err = browser.prepare()
+    mock.assert_equals(data ~= nil, true, "data should not be nil on success")
+    mock.assert_equals(err, nil, "err should be nil on success")
+    mock.assert_equals(data.library_id, "lib_test", "library_id should be 'lib_test'")
+end)
+
+-- ============================================================
+-- Test: browser.prepare() returns error when API not configured
+-- ============================================================
+run_test("browser.prepare() returns error when API not configured", function()
+    -- Save original mock and replace with unconfigured API
+    local orig_api = package.loaded["api"]
+    package.loaded["api"] = {
+        is_configured = function() return false end,
+    }
+
+    -- Reload the browser module so it picks up the new api mock
+    package.loaded["absaudio/library_browser"] = nil
+    local browser2 = require("absaudio/library_browser")
+
+    local data, err = browser2.prepare()
+    mock.assert_equals(data, nil, "data should be nil when API not configured")
+    mock.assert_equals(err ~= nil, true, "err should not be nil")
+    mock.assert_equals(err.type, "config", "error type should be 'config'")
+    mock.assert_equals(err.message, "API not configured", "error message should match")
+
+    -- Restore original mock
+    package.loaded["api"] = orig_api
+    package.loaded["absaudio/library_browser"] = nil
+end)
+
+-- ============================================================
+-- Test: browser.prepare() returns error when no libraries found
+-- ============================================================
+run_test("browser.prepare() returns error when no libraries found", function()
+    local orig_api = package.loaded["api"]
+    package.loaded["api"] = {
+        is_configured = function() return true end,
+        getLibraries = function()
+            return true, { libraries = {} }  -- success but empty list
+        end,
+    }
+
+    package.loaded["absaudio/library_browser"] = nil
+    local browser2 = require("absaudio/library_browser")
+
+    local data, err = browser2.prepare()
+    mock.assert_equals(data, nil, "data should be nil when no libraries")
+    mock.assert_equals(err ~= nil, true, "err should not be nil")
+    mock.assert_equals(err.type, "api", "error type should be 'api'")
+    mock.assert_equals(err.message, "No libraries found", "error message should match")
+
+    package.loaded["api"] = orig_api
+    package.loaded["absaudio/library_browser"] = nil
+end)
+
+-- ============================================================
+-- Test: browser.prepare() returns error when fetchAll fails
+-- ============================================================
+run_test("browser.prepare() returns error when fetchAll fails", function()
+    local orig_api = package.loaded["api"]
+    package.loaded["api"] = {
+        is_configured = function() return true end,
+        getLibraries = function()
+            return true, { libraries = { { id = "lib_1", name = "Test" } } }
+        end,
+    }
+
+    -- Mock library_store to fail fetchAll
+    local orig_store = package.loaded["absaudio/library_store"]
+    package.loaded["absaudio/library_store"] = {
+        fetchAll = function()
+            return false, { type = "network", message = "Connection refused" }
+        end,
+    }
+
+    package.loaded["absaudio/library_browser"] = nil
+    local browser2 = require("absaudio/library_browser")
+
+    local data, err = browser2.prepare()
+    mock.assert_equals(data, nil, "data should be nil when fetchAll fails")
+    mock.assert_equals(err ~= nil, true, "err should not be nil")
+    mock.assert_equals(err.type, "network", "error type should be 'network'")
+    mock.assert_equals(err.message, "Failed to load library", "error message should match")
+
+    package.loaded["api"] = orig_api
+    package.loaded["absaudio/library_store"] = orig_store
+    package.loaded["absaudio/library_browser"] = nil
+end)
+
+-- ============================================================
+-- Test: _addPageNav uses self._total_pages (no redundant getItems)
+-- ============================================================
+run_test("_addPageNav uses self._total_pages instead of redundant getItems call", function()
+    -- _addBookList sets self._total_pages from its getItems call.
+    -- _addPageNav should read self._total_pages, not call getItems again.
+    -- Verify the source code doesn't call getItems inside _addPageNav.
+    local source_file = io.open("absaudio/library_browser.lua", "r")
+    local source = source_file:read("*a")
+    source_file:close()
+
+    -- Extract _addPageNav function body
+    local nav_start = source:find("function LibraryBrowserView:_addPageNav")
+    local nav_end = source:find("\nend", nav_start)
+    local nav_body = source:sub(nav_start, nav_end)
+
+    mock.assert_equals(nav_body:find("getItems"), nil,
+        "_addPageNav should NOT call library_store.getItems() — it should use self._total_pages")
+    mock.assert_equals(nav_body:find("self%._total_pages") ~= nil, true,
+        "_addPageNav should reference self._total_pages")
+
+    package.loaded["absaudio/library_browser"] = nil
+end)
+-- ============================================================
+-- Summary
+-- ===========================================================
 print(string.format("\n%d passed, %d failed", passed, failed))
 
 if #errors > 0 then
