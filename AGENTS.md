@@ -46,6 +46,7 @@ They capture what was done, decisions & rationale, gotchas & fixes, and next ste
 
 | Date | Type | File | Summary |
 |------|------|------|----------|
+| 2026-06-09 | issue | [issue16-shared-widget-helpers-deduplication_log.md](docs/devlog/20260609-issue16-shared-widget-helpers-deduplication_log.md) | Created `widget_helpers.lua` module; extracted triplicated `format_duration`, `format_time`, `format_file_size`, `addSeparator` from 3 widgets; removed `get_item_title`/`get_item_author` duplicates; 31 new tests; 159 total pass |
 | 2026-06-09 | issue | [issue14-book-detail-instance-state-migration_log.md](docs/devlog/20260609-issue14-book-detail-instance-state-migration_log.md) | Migrated `_on_back`/`_on_download` from module-level locals to `self.on_back`/`self.on_download` on BookDetailView; added callback isolation tests; 96 tests pass |
 | 2026-06-09 | issue | [issue12-dashboard-instance-state-migration_log.md](docs/devlog/20260609-issue12-dashboard-instance-state-migration_log.md) | Migrated `_on_settings`/`_on_sync_now`/`_on_export_diagnostics` from module-level locals to instance state on DashboardView; added callback isolation tests; 103 tests pass |
 | 2026-06-09 | issue | [issue04-acceptance-criteria-audit-gaps-closed_log.md](docs/devlog/20260609-issue04-acceptance-criteria-audit-gaps-closed_log.md) | Audited all 12 acceptance criteria; added `wasLastFetchSuccessful()` + greyed-out offline Browse Library button; created book_detail tests (9); 94 tests pass |

@@ -30,6 +30,7 @@ local Screen = Device.screen
 local config = require("config")
 local abs_logger = require("abs_logger")
 local error_handler = require("error_handler")
+local widget_helpers = require("absaudio/widget_helpers")
 
 -- Try to load manifest and api
 local has_manifest, manifest = pcall(require, "manifest")
@@ -44,18 +45,6 @@ local has_library_store, library_store = pcall(require, "absaudio/library_store"
 
 local dashboard = {}
 
-------------------------------------------------------------------------
--- Helper: format seconds as "Xh Ym" or "Ym" or "0m"
-------------------------------------------------------------------------
-local function format_duration(seconds)
-    if not seconds or seconds <= 0 then return "0m" end
-    local h = math.floor(seconds / 3600)
-    local m = math.floor((seconds % 3600) / 60)
-    if h > 0 then
-        return string.format("%dh %dm", h, m)
-    end
-    return string.format("%dm", m)
-end
 
 ------------------------------------------------------------------------
 -- Helper: format progress as percentage
@@ -116,19 +105,19 @@ function DashboardView:init()
     self:_addResumeSection()
 
     -- Separator
-    self:_addSeparator()
+    widget_helpers.addSeparator(self.content_group, self.content_width)
 
     -- Downloaded Books section
     self:_addDownloadedBooksSection()
 
     -- Separator
-    self:_addSeparator()
+    widget_helpers.addSeparator(self.content_group, self.content_width)
 
     -- Browse Library button
     self:_addBrowseLibraryButton()
 
     -- Separator
-    self:_addSeparator()
+    widget_helpers.addSeparator(self.content_group, self.content_width)
 
     -- Settings section
     self:_addSettingsSection()
@@ -206,8 +195,8 @@ function DashboardView:_addResumeSection()
     if recent_book and recent_book.current_time and recent_book.current_time > 0 then
         -- Show book info with resume button
         local progress_text = format_progress(recent_book.current_time, recent_book.duration)
-            .. " · " .. format_duration(recent_book.current_time)
-            .. " / " .. format_duration(recent_book.duration)
+            .. " · " .. widget_helpers.format_duration(recent_book.current_time)
+            .. " / " .. widget_helpers.format_duration(recent_book.duration)
 
         local info_text = string.format("%s\n%s\n%s\n▶ Resume",
             recent_book.title or "Unknown",
@@ -289,8 +278,8 @@ function DashboardView:_addDownloadedBooksSection()
                 progress_text = "✓ Finished"
             elseif book.duration and book.duration > 0 then
                 progress_text = format_progress(book.current_time, book.duration)
-                    .. " · " .. format_duration(book.current_time or 0)
-                    .. " / " .. format_duration(book.duration)
+                    .. " · " .. widget_helpers.format_duration(book.current_time or 0)
+                    .. " / " .. widget_helpers.format_duration(book.duration)
             else
                 progress_text = _("Not started")
             end
@@ -437,16 +426,6 @@ function DashboardView:_addActionButton(label_text, callback)
     table.insert(self.content_group, tap_container)
 end
 
-function DashboardView:_addSeparator()
-    table.insert(self.content_group, LineWidget:new{
-        background = Blitbuffer.COLOR_DARK_GRAY,
-        dimen = Geom:new{
-            w = self.content_width,
-            h = Size.line.thin,
-        },
-    })
-    table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
-end
 
 -- Actions
 
@@ -456,8 +435,8 @@ function DashboardView:_onResumeBook(book)
     UIManager:show(InfoMessage:new{
         text = string.format(_("Resume: %s\nPosition: %s / %s"),
             book.title or "Unknown",
-            format_duration(book.current_time),
-            format_duration(book.duration)),
+            widget_helpers.format_duration(book.current_time),
+            widget_helpers.format_duration(book.duration)),
         timeout = 3,
     })
 end

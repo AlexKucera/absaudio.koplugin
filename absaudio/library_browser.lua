@@ -37,6 +37,7 @@ local Screen = Device.screen
 
 local abs_logger = require("abs_logger")
 local library_store = require("absaudio/library_store")
+local widget_helpers = require("absaudio/widget_helpers")
 
 -- Try to load optional dependencies
 local has_api, api = pcall(require, "api")
@@ -49,18 +50,6 @@ local browser = {}
 -- Only _view remains module-level as a reference to the active instance.
 local _view = nil  -- reference to current LibraryBrowserView instance
 
-------------------------------------------------------------------------
--- Helper: format seconds as "Xh Ym" or "Ym" or "0m"
-------------------------------------------------------------------------
-local function format_duration(seconds)
-    if not seconds or seconds <= 0 then return "0m" end
-    local h = math.floor(seconds / 3600)
-    local m = math.floor((seconds % 3600) / 60)
-    if h > 0 then
-        return string.format("%dh %dm", h, m)
-    end
-    return string.format("%dm", m)
-end
 
 ------------------------------------------------------------------------
 -- Library Browser View
@@ -101,7 +90,7 @@ function LibraryBrowserView:init()
     self:_addHeader()
 
     -- Separator
-    self:_addSeparator()
+    widget_helpers.addSeparator(self.content_group, self.content_width)
 
     -- Book list (populated from library_store)
     self:_addBookList()
@@ -268,20 +257,6 @@ function LibraryBrowserView:_addHeader()
 end
 
 ------------------------------------------------------------------------
--- Separator line
-------------------------------------------------------------------------
-function LibraryBrowserView:_addSeparator()
-    table.insert(self.content_group, LineWidget:new{
-        background = Blitbuffer.COLOR_DARK_GRAY,
-        dimen = Geom:new{
-            w = self.content_width,
-            h = Size.line.thin,
-        },
-    })
-    table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
-end
-
-------------------------------------------------------------------------
 -- Calculate items per page based on screen height and row height
 function LibraryBrowserView:_getPerPage()
     local row_height = Screen:scaleBySize(100)
@@ -398,7 +373,7 @@ function LibraryBrowserView:_addBookRow(item)
     local author_str = library_store.getItemAuthor(item)
     local duration_str = ""
     if item.media and item.media.duration and item.media.duration > 0 then
-        duration_str = format_duration(item.media.duration)
+        duration_str = widget_helpers.format_duration(item.media.duration)
     end
 
     -- Progress indicator

@@ -38,80 +38,19 @@ local Screen = Device.screen
 local config = require("config")
 local abs_logger = require("abs_logger")
 local error_handler = require("error_handler")
+local widget_helpers = require("absaudio/widget_helpers")
 
 -- Try to load dependencies
 local has_manifest, manifest = pcall(require, "manifest")
 local has_api, api = pcall(require, "api")
 local has_cover_cache, cover_cache = pcall(require, "absaudio/cover_cache")
+local library_store = require("absaudio/library_store")
 
 local detail = {}
 
-------------------------------------------------------------------------
-------------------------------------------------------------------------
--- Helper: format seconds as "Xh Ym" or "Ym" or "0m"
-------------------------------------------------------------------------
-local function format_duration(seconds)
-    if not seconds or seconds <= 0 then return "0m" end
-    local h = math.floor(seconds / 3600)
-    local m = math.floor((seconds % 3600) / 60)
-    if h > 0 then
-        return string.format("%dh %dm", h, m)
-    end
-    return string.format("%dm", m)
-end
 
-------------------------------------------------------------------------
--- Helper: format seconds as "HH:MM:SS" or "MM:SS"
-------------------------------------------------------------------------
-local function format_time(seconds)
-    if not seconds or seconds < 0 then return "0:00" end
-    local h = math.floor(seconds / 3600)
-    local m = math.floor((seconds % 3600) / 60)
-    local s = math.floor(seconds % 60)
-    if h > 0 then
-        return string.format("%d:%02d:%02d", h, m, s)
-    end
-    return string.format("%d:%02d", m, s)
-end
 
-------------------------------------------------------------------------
--- Helper: format file size as "50 MB", "1.2 GB", etc.
-------------------------------------------------------------------------
-local function format_file_size(bytes)
-    if not bytes or bytes <= 0 then return "0 B" end
-    local units = { "B", "KB", "MB", "GB", "TB" }
-    local size = bytes
-    local unit_idx = 1
-    while size >= 1024 and unit_idx < #units do
-        size = size / 1024
-        unit_idx = unit_idx + 1
-    end
-    if unit_idx > 1 then
-        -- One decimal for KB and above
-        return string.format("%.1f %s", size, units[unit_idx])
-    end
-    return string.format("%d %s", size, units[unit_idx])
-end
 
-------------------------------------------------------------------------
--- Helper: get title from item (checks media.metadata and top-level)
-------------------------------------------------------------------------
-local function get_item_title(item)
-    if item.media and item.media.metadata and item.media.metadata.title then
-        return item.media.metadata.title
-    end
-    return item.title or _("Unknown Title")
-end
-
-------------------------------------------------------------------------
--- Helper: get author from item
-------------------------------------------------------------------------
-local function get_item_author(item)
-    if item.media and item.media.metadata and item.media.metadata.authorName then
-        return item.media.metadata.authorName
-    end
-    return item.author or ""
-end
 
 ------------------------------------------------------------------------
 -- Helper: get duration from item
@@ -185,20 +124,20 @@ function BookDetailView:init()
     -- Download status badge
     self:_addDownloadStatus()
 
-    self:_addSeparator()
+    widget_helpers.addSeparator(self.content_group, self.content_width)
 
     -- Audio files section
     local audio_files = self.item.audioFiles or {}
     if #audio_files > 0 then
         self:_addAudioFiles(audio_files)
-        self:_addSeparator()
+        widget_helpers.addSeparator(self.content_group, self.content_width)
     end
 
     -- Ebook/PDF files section
     local ebook_files = self.item.ebookFiles or {}
     if #ebook_files > 0 then
         self:_addEbookFiles(ebook_files)
-        self:_addSeparator()
+        widget_helpers.addSeparator(self.content_group, self.content_width)
     end
 
     -- Chapters section
@@ -329,8 +268,8 @@ end
 -- Metadata section: title, author, duration
 ------------------------------------------------------------------------
 function BookDetailView:_addMetadata()
-    local title = get_item_title(self.item)
-    local author = get_item_author(self.item)
+    local title = library_store.getItemTitle(self.item)
+    local author = library_store.getItemAuthor(self.item)
     local duration = get_item_duration(self.item)
 
     -- Title
@@ -359,7 +298,7 @@ function BookDetailView:_addMetadata()
     -- Duration
     if duration and duration > 0 then
         local duration_widget = TextWidget:new{
-            text = "⏱ " .. format_duration(duration),
+            text = "⏱ " .. widget_helpers.format_duration(duration),
             face = Font:getFace("cfont", 14),
             fgcolor = Blitbuffer.COLOR_DARK_GRAY,
         }
@@ -436,20 +375,6 @@ function BookDetailView:_addDownloadStatus()
 end
 
 ------------------------------------------------------------------------
--- Separator
-------------------------------------------------------------------------
-function BookDetailView:_addSeparator()
-    table.insert(self.content_group, LineWidget:new{
-        background = Blitbuffer.COLOR_DARK_GRAY,
-        dimen = Geom:new{
-            w = self.content_width,
-            h = Size.line.thin,
-        },
-    })
-    table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
-end
-
-------------------------------------------------------------------------
 -- Section header helper
 ------------------------------------------------------------------------
 function BookDetailView:_addSectionHeader(text)
@@ -493,7 +418,7 @@ function BookDetailView:_addAudioFiles(audio_files)
             badge_prefix,
             format_str,
             file.filename or _("Unknown file"),
-            format_file_size(file.size))
+            widget_helpers.format_file_size(file.size))
 
         local file_widget = TextWidget:new{
             text = file_text,
@@ -526,7 +451,7 @@ function BookDetailView:_addEbookFiles(ebook_files)
         local file_text = string.format("  %s  %s  %s",
             format_str,
             file.filename or _("Unknown file"),
-            format_file_size(file.size))
+            widget_helpers.format_file_size(file.size))
 
         local file_widget = TextWidget:new{
             text = file_text,
@@ -549,7 +474,7 @@ function BookDetailView:_addChapters(chapters)
 
     for i, chapter in ipairs(chapters) do
         local chapter_title = chapter.title or string.format(_("Chapter %d"), i)
-        local time_range = format_time(chapter.start or 0) .. " → " .. format_time(chapter["end"] or 0)
+        local time_range = widget_helpers.format_time(chapter.start or 0) .. " → " .. widget_helpers.format_time(chapter["end"] or 0)
 
         local chapter_text = string.format("  %s\n    %s", chapter_title, time_range)
 
@@ -583,7 +508,7 @@ function BookDetailView:_addChapters(chapters)
             UIManager:show(InfoMessage:new{
                 text = string.format(_("Chapter: %s\nStart: %s"),
                     self.chapter.title or _("Untitled"),
-                    format_time(self.chapter.start)),
+                    widget_helpers.format_time(self.chapter.start)),
                 timeout = 2,
             })
             return true
