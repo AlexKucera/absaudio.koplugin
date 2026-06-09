@@ -438,6 +438,118 @@ run_test("show with item title but no manifest shows limited data (no error)", f
 end)
 
 -- ============================================================
+-- Test: callbacks are stored on instance, not module-level
+-- Verifies that sequential show() calls with different callbacks
+-- result in each instance using its own callbacks (isolation).
+-- ============================================================
+run_test("callbacks are isolated between sequential show() calls", function()
+    -- Track which callback was invoked
+    local back_a_called = false
+    local back_b_called = false
+    local download_a_called = false
+
+    -- Capture instances created by UIManager:show
+    local shown_widgets = {}
+    local orig_show = package.loaded["ui/uimanager"].show
+    package.loaded["ui/uimanager"].show = function(self, widget)
+        table.insert(shown_widgets, widget)
+    end
+
+    -- Item that is NOT downloaded (so download button appears)
+    local item_a = {
+        id = "item_a",
+        title = "Book A",
+        mediaType = "book",
+        media = { duration = 3600 },
+    }
+
+    -- Show first book with callback A
+    mock_api_configured = false
+    mock_manifest_books = {}  -- not downloaded
+    detail.show(item_a, {
+        on_back = function() back_a_called = true end,
+        on_download = function() download_a_called = true end,
+    })
+
+    -- Find the BookDetailView instance
+    local view_a = shown_widgets[#shown_widgets]
+    mock.assert_equals(view_a ~= nil, true, "should have created a view widget")
+
+    -- Show second book with callback B
+    local item_b = {
+        id = "item_b",
+        title = "Book B",
+        mediaType = "book",
+        media = { duration = 7200 },
+    }
+    detail.show(item_b, {
+        on_back = function() back_b_called = true end,
+        on_download = nil,
+    })
+
+    local view_b = shown_widgets[#shown_widgets]
+    mock.assert_equals(view_b ~= nil, true, "should have created a second view widget")
+
+    -- Now close view_a — it should call back_a, NOT back_b
+    -- (this is the key isolation test)
+    view_a:onClose()
+    mock.assert_equals(back_a_called, true, "view_a close should call its own on_back callback")
+    mock.assert_equals(back_b_called, false, "view_a close should NOT call view_b's on_back callback")
+
+    -- Close view_b
+    view_b:onClose()
+    mock.assert_equals(back_b_called, true, "view_b close should call its own on_back callback")
+
+    -- Restore
+    package.loaded["ui/uimanager"].show = orig_show
+end)
+
+-- ============================================================
+-- Test: on_download callback reads from instance state
+-- ============================================================
+run_test("on_download callback uses instance state", function()
+    local downloaded_item = nil
+
+    -- Capture instances
+    local shown_widgets = {}
+    local orig_show = package.loaded["ui/uimanager"].show
+    package.loaded["ui/uimanager"].show = function(self, widget)
+        table.insert(shown_widgets, widget)
+    end
+
+    local item = {
+        id = "item_dl",
+        title = "Downloadable Book",
+        mediaType = "book",
+        media = { duration = 3600 },
+    }
+
+    mock_api_configured = false
+    mock_manifest_books = {}  -- not downloaded, so download button appears
+
+    detail.show(item, {
+        on_back = function() end,
+        on_download = function(it) downloaded_item = it end,
+    })
+
+    local view = shown_widgets[#shown_widgets]
+    mock.assert_equals(view ~= nil, true, "should have created a view widget")
+
+    -- The download button tap container should reference the view's on_download
+    -- Simulate finding and invoking the download tap handler
+    -- We verify it by checking self.on_download is set on the instance
+    mock.assert_equals(type(view.on_download), "function", "view should have on_download function")
+
+    -- Call on_download directly to verify it uses the instance's callback
+    view.on_download(item)
+    mock.assert_equals(downloaded_item ~= nil, true, "on_download callback should have been invoked")
+    mock.assert_equals(downloaded_item.id, "item_dl", "on_download should receive correct item")
+
+    -- Restore
+    package.loaded["ui/uimanager"].show = orig_show
+end)
+
+-- ============================================================
 -- Summary
 -- ============================================================
 print(string.format("\n%d passed, %d failed", passed, failed))

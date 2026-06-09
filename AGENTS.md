@@ -46,6 +46,7 @@ They capture what was done, decisions & rationale, gotchas & fixes, and next ste
 
 | Date | Type | File | Summary |
 |------|------|------|----------|
+| 2026-06-09 | issue | [issue14-book-detail-instance-state-migration_log.md](docs/devlog/20260609-issue14-book-detail-instance-state-migration_log.md) | Migrated `_on_back`/`_on_download` from module-level locals to `self.on_back`/`self.on_download` on BookDetailView; added callback isolation tests; 96 tests pass |
 | 2026-06-09 | issue | [issue04-acceptance-criteria-audit-gaps-closed_log.md](docs/devlog/20260609-issue04-acceptance-criteria-audit-gaps-closed_log.md) | Audited all 12 acceptance criteria; added `wasLastFetchSuccessful()` + greyed-out offline Browse Library button; created book_detail tests (9); 94 tests pass |
 | 2026-06-09 | issue | [issue04-library-browser-search-feature_log.md](docs/devlog/20260609-issue04-library-browser-search-feature_log.md) | Search feature: TDD tests, IconWidget for search button, Lua closure fix, `browser.search()` API; search filtering in emulator still broken |
 | 2026-06-09 | issue | [issue04-library-browser-search-partial-repaint-fix_log.md](docs/devlog/20260609-issue04-library-browser-search-partial-repaint-fix_log.md) | Fixed search results rendering as partial overlay; added `UIManager:setDirty("full")` in `_refresh()` |

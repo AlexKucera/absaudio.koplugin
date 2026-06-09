@@ -46,10 +46,7 @@ local has_cover_cache, cover_cache = pcall(require, "absaudio/cover_cache")
 
 local detail = {}
 
--- Callbacks passed from caller
-local _on_back = nil
-local _on_download = nil
-
+------------------------------------------------------------------------
 ------------------------------------------------------------------------
 -- Helper: format seconds as "Xh Ym" or "Ym" or "0m"
 ------------------------------------------------------------------------
@@ -402,7 +399,7 @@ function BookDetailView:_addDownloadStatus()
         table.insert(self.content_group, badge)
 
         -- Show download button if callback provided
-        if _on_download then
+        if self.on_download then
             table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
             local download_btn = TextWidget:new{
                 text = _("⬇ Download"),
@@ -423,9 +420,10 @@ function BookDetailView:_addDownloadStatus()
             }
             tap_container.detail_ref = self.detail_ref
             local item = self.item
+            local on_download_cb = self.on_download
             function tap_container:onTapDownload()
-                if _on_download then
-                    _on_download(item)
+                if on_download_cb then
+                    on_download_cb(item)
                 end
                 return true
             end
@@ -603,8 +601,8 @@ end
 ------------------------------------------------------------------------
 function BookDetailView:onClose()
     UIManager:close(self)
-    if _on_back then
-        _on_back()
+    if self.on_back then
+        self.on_back()
     end
     return true
 end
@@ -623,8 +621,6 @@ end
 ------------------------------------------------------------------------
 function detail.show(item, callbacks)
     callbacks = callbacks or {}
-    _on_back = callbacks.on_back
-    _on_download = callbacks.on_download
 
     abs_logger.info("Showing book detail: " .. (item.title or item.id or "unknown"))
 
@@ -635,17 +631,17 @@ function detail.show(item, callbacks)
 
     -- Try to fetch expanded details from API
     if has_api and api.is_configured() then
-        detail._fetchAndShow(item)
+        detail._fetchAndShow(item, callbacks)
     else
         -- Offline or not configured — try manifest fallback
-        detail._showFromManifestOrError(item)
+        detail._showFromManifestOrError(item, callbacks)
     end
 end
 
 ------------------------------------------------------------------------
 -- Fetch expanded details from API and show the view
 ------------------------------------------------------------------------
-function detail._fetchAndShow(item)
+function detail._fetchAndShow(item, callbacks)
     -- Show loading indicator
     local loading = InfoMessage:new{
         text = _("Loading book details…"),
@@ -663,11 +659,11 @@ function detail._fetchAndShow(item)
         if ok then
             -- Merge expanded data with the original item
             local merged_item = detail._mergeItemData(item, expanded)
-            detail._renderView(merged_item)
+            detail._renderView(merged_item, callbacks)
         else
             abs_logger.warn("Failed to fetch item details: " .. tostring(expanded.message or "unknown"))
             -- Fallback to manifest or show error
-            detail._showFromManifestOrError(item)
+            detail._showFromManifestOrError(item, callbacks)
         end
     end)
 end
@@ -675,13 +671,13 @@ end
 ------------------------------------------------------------------------
 -- Try to show from manifest data, or show error
 ------------------------------------------------------------------------
-function detail._showFromManifestOrError(item)
+function detail._showFromManifestOrError(item, callbacks)
     if has_manifest then
         local book = manifest.getBook(item.id)
         if book then
             -- Build a displayable item from manifest data
             local manifest_item = detail._itemFromManifest(item, book)
-            detail._renderView(manifest_item)
+            detail._renderView(manifest_item, callbacks)
             return
         end
     end
@@ -690,7 +686,7 @@ function detail._showFromManifestOrError(item)
     -- (basic info from library listing) with a connection message
     if item.title or item.media then
         abs_logger.info("Showing limited detail from cached list data")
-        detail._renderView(item)
+        detail._renderView(item, callbacks)
     else
         error_handler.show("network", _("Connect to WiFi to view book details."))
     end
@@ -699,9 +695,11 @@ end
 ------------------------------------------------------------------------
 -- Render the detail view widget
 ------------------------------------------------------------------------
-function detail._renderView(item)
+function detail._renderView(item, callbacks)
     local view = BookDetailView:new{
         item = item,
+        on_back = callbacks and callbacks.on_back,
+        on_download = callbacks and callbacks.on_download,
     }
     UIManager:show(view)
 end
