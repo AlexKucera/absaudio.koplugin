@@ -44,13 +44,9 @@ local has_cover_cache, cover_cache = pcall(require, "absaudio/cover_cache")
 
 local browser = {}
 
--- Callbacks passed from caller
-local _on_back = nil
-local _on_book_tap = nil
-
--- Current browser state
-local _current_page = 1
-local _search_query = ""
+-- Instance state is stored on the LibraryBrowserView (self.on_back,
+-- self.on_book_tap, self.current_page, self.search_query).
+-- Only _view remains module-level as a reference to the active instance.
 local _view = nil  -- reference to current LibraryBrowserView instance
 
 ------------------------------------------------------------------------
@@ -209,9 +205,9 @@ function LibraryBrowserView:_addHeader()
         alpha = true,
     }
     local search_elements = { search_icon }
-    if _search_query and _search_query ~= "" then
+    if self.search_query and self.search_query ~= "" then
         local search_label = TextWidget:new{
-            text = _search_query,
+            text = self.search_query,
             face = Font:getFace("cfont", 12),
             fgcolor = Blitbuffer.COLOR_BLUE,
         }
@@ -221,7 +217,7 @@ function LibraryBrowserView:_addHeader()
     local search_inner = HorizontalGroup:new(search_elements)
     local search_container = InputContainer:new{
         dimen = Geom:new{
-            w = search_icon:getSize().w + Size.padding.default * 2 + (_search_query and _search_query ~= "" and 60 or 0),
+            w = search_icon:getSize().w + Size.padding.default * 2 + (self.search_query and self.search_query ~= "" and 60 or 0),
             h = search_icon:getSize().h + Size.padding.default * 2,
         },
     }
@@ -259,9 +255,9 @@ function LibraryBrowserView:_addHeader()
     table.insert(self.content_group, header)
 
     -- Search query indicator (if searching)
-    if _search_query and _search_query ~= "" then
+    if self.search_query and self.search_query ~= "" then
         local query_label = TextWidget:new{
-            text = _("Searching: ") .. _search_query,
+            text = _("Searching: ") .. self.search_query,
             face = Font:getFace("cfont", 12),
             fgcolor = Blitbuffer.COLOR_DARK_GRAY,
         }
@@ -304,11 +300,11 @@ end
 -- Book list — renders current page of items
 ------------------------------------------------------------------------
 function LibraryBrowserView:_addBookList()
-    abs_logger.verbose("_addBookList: search='" .. tostring(_search_query) .. "' page=" .. tostring(_current_page))
+    abs_logger.verbose("_addBookList: search='" .. tostring(self.search_query) .. "' page=" .. tostring(self.current_page))
     local result = library_store.getItems({
-        page = _current_page,
+        page = self.current_page,
         per_page = self:_getPerPage(),
-        search = _search_query,
+        search = self.search_query,
     })
     abs_logger.verbose("_addBookList: getItems returned " .. #result.items .. " items (total " .. result.total_items .. ")")
 
@@ -317,8 +313,8 @@ function LibraryBrowserView:_addBookList()
 
     if #result.items == 0 then
         local empty_msg
-        if _search_query and _search_query ~= "" then
-            empty_msg = _("No books match \"") .. _search_query .. "\""
+        if self.search_query and self.search_query ~= "" then
+            empty_msg = _("No books match \"") .. self.search_query .. "\""
         else
             empty_msg = _("No books in this library.")
         end
@@ -473,9 +469,9 @@ end
 -----------------------------------------------------------------------
 function LibraryBrowserView:_addPageNav()
     local result = library_store.getItems({
-        page = _current_page,
+        page = self.current_page,
         per_page = self:_getPerPage(),
-        search = _search_query,
+        search = self.search_query,
     })
 
     -- Only show page nav when there's more than one page
@@ -485,13 +481,13 @@ function LibraryBrowserView:_addPageNav()
 
     -- Page info text
     local page_text = TextWidget:new{
-        text = _(string.format("Page %d / %d", _current_page, result.total_pages)),
+        text = _(string.format("Page %d / %d", self.current_page, result.total_pages)),
         face = Font:getFace("cfont", 14),
         fgcolor = Blitbuffer.COLOR_DARK_GRAY,
     }
 
     -- Prev button
-    local prev_enabled = _current_page > 1
+    local prev_enabled = self.current_page > 1
     local prev_text = TextWidget:new{
         text = _("← Prev"),
         face = Font:getFace("cfont", 16),
@@ -519,7 +515,7 @@ function LibraryBrowserView:_addPageNav()
     }
 
     -- Next button
-    local next_enabled = _current_page < result.total_pages
+    local next_enabled = self.current_page < result.total_pages
     local next_text = TextWidget:new{
         text = _("Next →"),
         face = Font:getFace("cfont", 16),
@@ -572,37 +568,49 @@ function LibraryBrowserView:_addPageNav()
 end
 
 function LibraryBrowserView:onPrevPage()
-    if _current_page > 1 then
-        _current_page = _current_page - 1
-        abs_logger.verbose("Previous page: " .. _current_page)
+    if self.current_page > 1 then
+        self.current_page = self.current_page - 1
+        abs_logger.verbose("Previous page: " .. self.current_page)
         self:_refresh()
     end
 end
 
 function LibraryBrowserView:onNextPage()
-    _current_page = _current_page + 1
-    abs_logger.verbose("Loading page " .. _current_page)
+    self.current_page = self.current_page + 1
+    abs_logger.verbose("Loading page " .. self.current_page)
     self:_refresh()
 end
 
 function LibraryBrowserView:_refresh()
+    -- Propagate instance state to the new view
+    local saved_on_back = self.on_back
+    local saved_on_book_tap = self.on_book_tap
+    local saved_current_page = self.current_page
+    local saved_search_query = self.search_query
+
     UIManager:close(self)
-    _view = LibraryBrowserView:new{}
+    _view = LibraryBrowserView:new{
+        on_back = saved_on_back,
+        on_book_tap = saved_on_book_tap,
+        current_page = saved_current_page,
+        search_query = saved_search_query,
+    }
+
     UIManager:show(_view)
     UIManager:setDirty(_view, "full")
 end
 
 function LibraryBrowserView:onClose()
-    if _on_back then
-        _on_back()
+    if self.on_back then
+        self.on_back()
     end
     UIManager:close(self)
 end
 
 function LibraryBrowserView:onBookTap(item)
     abs_logger.info("Book tapped: " .. (item.title or item.id))
-    if _on_book_tap then
-        _on_book_tap(item)
+    if self.on_book_tap then
+        self.on_book_tap(item)
     end
     return true
 end
@@ -621,7 +629,7 @@ function LibraryBrowserView:onCycleSort()
     end
 
     library_store.setSort(next_sort)
-    _current_page = 1  -- reset to first page
+    self.current_page = 1  -- reset to first page
     abs_logger.verbose("Sort cycled to: " .. next_sort)
 
     -- Re-render
@@ -632,7 +640,7 @@ function LibraryBrowserView:onSearch()
     local input_dialog
     input_dialog = InputDialog:new{
         title = _("Search library"),
-        input = _search_query or "",
+        input = self.search_query or "",
         input_type = "text",
         buttons = {
             {
@@ -672,10 +680,6 @@ end
 ------------------------------------------------------------------------
 function browser.show(callbacks)
     callbacks = callbacks or {}
-    _on_back = callbacks.on_back
-    _on_book_tap = callbacks.on_book_tap
-    _current_page = 1
-    _search_query = ""
     _view = nil
 
     print("[ABS-BROWSER] show() called")
@@ -684,7 +688,7 @@ function browser.show(callbacks)
     -- First, we need to get the library ID
     if not has_api or not api.is_configured() then
         print("[ABS-BROWSER] api not configured, calling on_back")
-        if _on_back then _on_back() end
+        if callbacks.on_back then callbacks.on_back() end
         return
     end
 
@@ -701,7 +705,7 @@ function browser.show(callbacks)
                 text = _("No libraries found. Check your server configuration."),
                 timeout = 3,
             })
-            if _on_back then _on_back() end
+            if callbacks.on_back then callbacks.on_back() end
             return
         end
 
@@ -718,7 +722,7 @@ function browser.show(callbacks)
                 text = _("Failed to load library. Check your connection."),
                 timeout = 3,
             })
-            if _on_back then _on_back() end
+            if callbacks.on_back then callbacks.on_back() end
             return
         end
 
@@ -730,7 +734,12 @@ function browser.show(callbacks)
         end
 
         print("[ABS-BROWSER] creating LibraryBrowserView...")
-        _view = LibraryBrowserView:new{}
+        _view = LibraryBrowserView:new{
+            on_back = callbacks.on_back,
+            on_book_tap = callbacks.on_book_tap,
+            current_page = 1,
+            search_query = "",
+        }
         print("[ABS-BROWSER] showing view...")
         UIManager:show(_view)
         print("[ABS-BROWSER] view shown!")
@@ -806,32 +815,31 @@ end
 --- Get current browser state (for testing and external inspection)
 -- @return table  { search_query, current_page }
 function browser.getState()
+    if _view then
+        return {
+            search_query = _view.search_query or "",
+            current_page = _view.current_page or 1,
+        }
+    end
     return {
-        search_query = _search_query,
-        current_page = _current_page,
+        search_query = "",
+        current_page = 1,
     }
 end
 
---- Set search query (for testing)
--- @param query string
-function browser._setSearchQuery(query)
-    _search_query = query
-end
-
---- Set current page (for testing)
--- @param page number
-function browser._setCurrentPage(page)
-    _current_page = page
+--- Get reference to current view instance (for testing)
+function browser._getView()
+    return _view
 end
 
 --- Search the library by query string
 --- Sets the search query, resets to page 1, and refreshes the view.
 --- @param query string  search text (empty string clears the search)
 function browser.search(query)
-    _search_query = query or ""
-    _current_page = 1
-    abs_logger.verbose("Search: query='" .. _search_query .. "'")
     if _view then
+        _view.search_query = query or ""
+        _view.current_page = 1
+        abs_logger.verbose("Search: query='" .. _view.search_query .. "'")
         _view:_refresh()
     end
 end

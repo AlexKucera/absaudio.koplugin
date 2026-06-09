@@ -75,4 +75,47 @@ function mock.assert_equals(actual, expected, message)
     end
 end
 
+--- Create a mock HTTP transport stub for api.lua tests
+-- @param responses table  array of {status_code=N, body="..."} or {error="msg"}
+-- @return table  transport stub with request() method and _call_log
+function mock.create_transport_stub(responses)
+    responses = responses or {}
+    local call_log = {}
+    local response_idx = 1
+
+    local function request(req)
+        -- Log the call
+        table.insert(call_log, {
+            url = req.url,
+            method = req.method,
+            headers = req.headers or {},
+        })
+
+        -- Get the next response
+        -- Get the next response (repeat last response if exhausted)
+        local resp = responses[response_idx] or responses[#responses] or { status_code = 200, body = "{}" }
+        if response_idx <= #responses then
+            response_idx = response_idx + 1
+        end
+
+        -- Handle error responses (connection failures)
+        if resp.error then
+            return 1, resp.error  -- socket.http returns (1, error_string) on failure
+        end
+
+        -- Write body to sink if present
+        if resp.body and req.sink then
+            req.sink(resp.body)
+        end
+
+        -- Return status code
+        return 1, resp.status_code
+    end
+
+    return {
+        request = request,
+        _call_log = call_log,
+    }
+end
+
 return mock

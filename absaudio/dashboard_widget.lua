@@ -44,11 +44,6 @@ local has_library_store, library_store = pcall(require, "absaudio/library_store"
 
 local dashboard = {}
 
--- Callbacks passed from plugin (set via dashboard.show())
-local _on_settings = nil
-local _on_sync_now = nil
-local _on_export_diagnostics = nil
-
 ------------------------------------------------------------------------
 -- Helper: format seconds as "Xh Ym" or "Ym" or "0m"
 ------------------------------------------------------------------------
@@ -82,6 +77,7 @@ local DashboardView = FocusManager:extend{
 }
 
 function DashboardView:init()
+    -- Callbacks are already set on self by the constructor (via dashboard.show)
     -- Store reference for tap callbacks
     self.dashboard_ref = self
 
@@ -482,13 +478,15 @@ function DashboardView:_onBrowseLibrary()
     end
 
     -- Capture settings callback and self before anything else
-    local settings_cb = _on_settings
+    local settings_cb = self.on_settings
+    local sync_cb = self.on_sync_now
+    local export_cb = self.on_export_diagnostics
     local dashboard_view = self
 
     print("[ABS-DEBUG] calling library_browser.show()...")
     library_browser.show({
         on_back = function()
-            dashboard.show({ on_settings = settings_cb })
+            dashboard.show({ on_settings = settings_cb, on_sync_now = sync_cb, on_export_diagnostics = export_cb })
         end,
         on_book_tap = function(item)
             local has_book_detail, book_detail = pcall(require, "absaudio/book_detail")
@@ -497,14 +495,14 @@ function DashboardView:_onBrowseLibrary()
                     on_back = function()
                         library_browser.show({
                             on_back = function()
-                                dashboard.show({ on_settings = settings_cb })
+                                dashboard.show({ on_settings = settings_cb, on_sync_now = sync_cb, on_export_diagnostics = export_cb })
                             end,
                             on_book_tap = function(i)
                                 book_detail.show(i, {
                                     on_back = function()
                                         library_browser.show({
                                             on_back = function()
-                                                dashboard.show({ on_settings = settings_cb })
+                                                dashboard.show({ on_settings = settings_cb, on_sync_now = sync_cb, on_export_diagnostics = export_cb })
                                             end,
                                         })
                                     end,
@@ -531,12 +529,13 @@ end
 
 function DashboardView:_onOpenSettings()
     abs_logger.info("Settings tapped from dashboard")
-    if _on_settings then
+    if self.on_settings then
         -- Close dashboard first, then open settings
         self:onClose()
         -- Schedule settings to open after dashboard closes
+        local settings_cb = self.on_settings
         UIManager:scheduleIn(0.2, function()
-            _on_settings()
+            settings_cb()
         end)
     else
         UIManager:show(InfoMessage:new{
@@ -548,8 +547,8 @@ end
 
 function DashboardView:_onSyncNow()
     abs_logger.info("Sync Now tapped")
-    if _on_sync_now then
-        _on_sync_now()
+    if self.on_sync_now then
+        self.on_sync_now()
     else
         UIManager:show(InfoMessage:new{
             text = _("Sync will be available in a future update."),
@@ -560,8 +559,8 @@ end
 
 function DashboardView:_onExportDiagnostics()
     abs_logger.info("Export Diagnostics tapped")
-    if _on_export_diagnostics then
-        _on_export_diagnostics()
+    if self.on_export_diagnostics then
+        self.on_export_diagnostics()
     else
         UIManager:show(InfoMessage:new{
             text = _("Export Diagnostics will be available in a future update."),
@@ -595,17 +594,17 @@ function dashboard.show(callbacks)
     callbacks = callbacks or {}
     abs_logger.info("Showing dashboard")
 
-    -- Store callbacks from plugin for dashboard actions
-    _on_settings = callbacks.on_settings
-    _on_sync_now = callbacks.on_sync_now
-    _on_export_diagnostics = callbacks.on_export_diagnostics
-
     -- Initialize manifest if available
     if has_manifest then
         manifest.init()
     end
 
-    local view = DashboardView:new{}
+    -- Pass callbacks through constructor so the instance owns them from creation
+    local view = DashboardView:new{
+        on_settings = callbacks.on_settings,
+        on_sync_now = callbacks.on_sync_now,
+        on_export_diagnostics = callbacks.on_export_diagnostics,
+    }
     UIManager:show(view)
 end
 

@@ -24,6 +24,7 @@ local api = {}
 -- Configuration
 local server_url = nil
 local auth_token = nil
+local transport = nil  -- injectable HTTP transport (nil until init)
 
 -- Retry settings
 local MAX_RETRIES = 3
@@ -44,9 +45,20 @@ local json_ok, json = pcall(require, "json")
 --- Configure the API client with server URL and auth token
 -- @param url string  ABS server base URL (no trailing slash)
 -- @param token string  API token
-function api.init(url, token)
+-- @param custom_transport table|nil  optional transport adapter with .request(req)
+function api.init(url, token, custom_transport)
     server_url = url
     auth_token = token
+    if custom_transport then
+        transport = custom_transport
+    else
+        -- Default: wrap socket.http for production use
+        transport = {
+            request = function(req)
+                return socket_http.request(req)
+            end
+        }
+    end
     abs_logger.verbose("API client configured for " .. tostring(server_url))
 end
 
@@ -101,7 +113,7 @@ end
 -- @return boolean ok
 -- @return number|string  status_code on success, error message on failure
 local function request_with_retry(request, retry_on_5xx)
-    if not socket_http_ok then
+    if not transport and not socket_http_ok then
         return false, {type = "network", message = "Network module not available"}
     end
 
@@ -112,7 +124,7 @@ local function request_with_retry(request, retry_on_5xx)
         abs_logger.verbose("Request attempt " .. attempt .. "/" .. max_attempts .. " " .. (request.method or "GET") .. " " .. request.url)
 
         local ok, status_code = pcall(function()
-            local _, code = socket_http.request(request)
+            local _, code = transport.request(request)
             return code
         end)
 
