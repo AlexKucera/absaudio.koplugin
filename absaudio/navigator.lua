@@ -45,6 +45,11 @@ function nav.push(name, data)
         return
     end
 
+    -- Save previous state for rollback if show_fn fails
+    local prev_widget = _current
+    local prev_name = _current_name
+    local prev_data = _current_data
+
     -- Push current screen onto stack (so pop can return to it)
     if _current_name then
         table.insert(_stack, { name = _current_name, data = _current_data })
@@ -58,6 +63,26 @@ function nav.push(name, data)
 
     -- Show the new screen
     _current = show_fn(data)
+
+    if _current == nil then
+        -- show_fn failed (returned nil) — rollback to previous screen
+        abs_logger.warn("navigator: show_fn for '" .. tostring(name) .. "' returned nil, rolling back")
+        table.remove(_stack)
+        if prev_name then
+            local prev_fn = _screens[prev_name]
+            if prev_fn then
+                _current = prev_fn(prev_data)
+                _current_name = prev_name
+                _current_data = prev_data
+                return
+            end
+        end
+        _current = nil
+        _current_name = nil
+        _current_data = nil
+        return
+    end
+
     _current_name = name
     _current_data = data
 end
@@ -121,6 +146,16 @@ end
 --- @param widget table  the new widget instance
 function nav._setCurrent(widget)
     _current = widget
+end
+
+--- Get the current screen name (for testing)
+function nav._current_name()
+    return _current_name
+end
+
+--- Get the current widget reference (for testing)
+function nav._current_widget()
+    return _current
 end
 
 return nav

@@ -252,6 +252,66 @@ run_test("UIManager:close called on current widget during pop", function()
 end)
 
 -- ============================================================
+-- Test 10: push rollback when show_fn returns nil (reentrant corruption fix)
+-- ============================================================
+run_test("push rolls back when show_fn returns nil", function()
+    local widget_a = { name = "widget_a" }
+    local widget_b = { name = "widget_b" }
+    local show_b_calls = 0
+
+    nav.register("a", function() return widget_a end)
+    nav.register("b", function()
+        show_b_calls = show_b_calls + 1
+        return nil  -- simulate failure
+    end)
+
+    nav.push("a", {})
+    mock.assert_equals(nav._current_name(), "a", "screen A should be active")
+
+    -- Reset close log
+    close_log = {}
+
+    -- Push B which fails — should roll back to A
+    nav.push("b", {})
+    mock.assert_equals(nav._current_name(), "a", "should roll back to A after B fails")
+    mock.assert_equals(nav._current_widget(), widget_a, "should show widget_a after rollback")
+    mock.assert_equals(show_b_calls, 1, "B's show_fn should be called exactly once")
+end)
+
+-- ============================================================
+-- Test 11: push rollback does not corrupt stack
+-- ============================================================
+run_test("push rollback keeps stack consistent for subsequent pops", function()
+    local widget_home = { name = "home" }
+    local widget_a = { name = "a" }
+    local widget_b = { name = "b" }
+    local show_b_calls = 0
+
+    nav.register("home", function() return widget_home end)
+    nav.register("a", function() return widget_a end)
+    nav.register("b", function()
+        show_b_calls = show_b_calls + 1
+        return nil  -- simulate failure
+    end)
+
+    nav.push("home", {})
+    nav.push("a", {})
+    mock.assert_equals(nav._current_name(), "a", "screen A should be active")
+
+    close_log = {}
+
+    -- B fails, should roll back to A
+    nav.push("b", {})
+    mock.assert_equals(nav._current_name(), "a", "should roll back to A")
+
+    -- Now pop should work correctly back to home
+    close_log = {}
+    nav.pop()
+    mock.assert_equals(nav._current_name(), "home", "pop after failed push should return to home")
+    mock.assert_equals(nav._current_widget(), widget_home, "should show home widget")
+end)
+
+-- ============================================================
 -- Summary
 -- ============================================================
 print(string.format("\n%d passed, %d failed", passed, failed))

@@ -696,30 +696,27 @@ function browser.show(data)
     if not prep_data then
         abs_logger.warn("Library browser prepare failed: " .. (err and err.message or "unknown"))
         if err and err.type == "config" then
-            if has_navigator then nav.pop() end
-            return
+            -- nav.push detects nil return and auto-rolls back
+            return nil
         elseif err and err.type == "api" then
             UIManager:show(InfoMessage:new{
                 text = _("No libraries found. Check your server configuration."),
                 timeout = 3,
             })
-            if has_navigator then nav.pop() end
-            return
+            return nil
         elseif err and err.type == "network" then
             UIManager:show(InfoMessage:new{
                 text = _("Failed to load library. Check your connection."),
                 timeout = 3,
             })
-            if has_navigator then nav.pop() end
-            return
+            return nil
         else
             -- Unexpected error
             UIManager:show(InfoMessage:new{
                 text = _("Error loading library: ") .. tostring(err and err.message or "unknown"),
                 timeout = 5,
             })
-            if has_navigator then nav.pop() end
-            return
+            return nil
         end
     end
 
@@ -738,7 +735,7 @@ function browser.show(data)
             text = _("Error rendering library: ") .. tostring(render_err),
             timeout = 5,
         })
-        return
+        return nil
     end
 
     -- Schedule batch cover fetch + refresh for current page
