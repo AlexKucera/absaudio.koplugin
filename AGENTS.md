@@ -1,3 +1,16 @@
+<Lua Best Practices>
+
+	1. Use `local` everywhere by default.
+	2. Return values explicitly and early.
+	3. Keep tables shallow and consistent in shape.
+	4. Use modules as namespaces, not as heavyweight objects.
+	5. Avoid hidden state unless the module is truly stateful.
+	6. Prefer plain functions over complex inheritance patterns.
+	7. Validate inputs at boundaries, not deep inside the code.
+	8. Add tests for edge cases where `nil` or missing keys can happen.
+
+</Lua Best Practices>
+
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
