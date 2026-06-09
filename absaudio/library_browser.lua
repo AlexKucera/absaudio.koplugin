@@ -42,6 +42,9 @@ local widget_helpers = require("absaudio/widget_helpers")
 local has_api, api = pcall(require, "api")
 local has_cover_cache, cover_cache = pcall(require, "absaudio/cover_cache")
 local has_navigator, nav = pcall(require, "absaudio/navigator")
+local has_manifest, manifest = pcall(require, "manifest")
+local has_config, config = pcall(require, "config")
+local downloader = require("absaudio/downloader")
 
 local browser = {}
 
@@ -583,9 +586,71 @@ end
 function LibraryBrowserView:onBookTap(item)
     abs_logger.info("Book tapped: " .. (item.title or item.id))
     if has_navigator then
-        nav.push("detail", { item = item })
+        nav.push("detail", {
+            item = item,
+            on_download = function(book_item)
+                self:_onDownloadBook(book_item)
+            end,
+            on_delete = function(book_item)
+                self:_onDeleteBook(book_item)
+            end,
+        })
     end
     return true
+end
+
+------------------------------------------------------------------------
+-- Download handler — triggers download pipeline
+-- @param item table  ABS item to download
+------------------------------------------------------------------------
+function LibraryBrowserView:_onDownloadBook(item)
+    abs_logger.info("Download requested: " .. (item.title or item.id))
+    -- TODO: coroutine-based chunked download with progress widget
+    -- For now, prepare the download (creates manifest entry)
+    if not has_manifest or not has_config then
+        UIManager:show(InfoMessage:new{ text = _("Download not available") })
+        return
+    end
+    manifest.init()
+    local ok, result = downloader.prepare_download(item, manifest, config)
+    if not ok then
+        if result == "already_downloaded" then
+            UIManager:show(InfoMessage:new{ text = _("Already downloaded. Use Delete first to re-download.") })
+        else
+            UIManager:show(InfoMessage:new{ text = _("No audio files found for this book.") })
+        end
+        return
+    end
+    UIManager:show(InfoMessage:new{ text = _("Download prepared: " .. #result.files .. " files") })
+end
+
+------------------------------------------------------------------------
+-- Delete handler — removes downloaded files and manifest entry
+-- @param item table  ABS item to delete
+------------------------------------------------------------------------
+function LibraryBrowserView:_onDeleteBook(item)
+    abs_logger.info("Delete requested: " .. (item.title or item.id))
+    if not has_manifest then
+        UIManager:show(InfoMessage:new{ text = _("Delete not available") })
+        return
+    end
+    manifest.init()
+    -- TODO: confirmation dialog before delete
+    local lfs = _G.lfs or require("lfs")
+    local fs = {
+        delete_file = function(path)
+            os.remove(path)
+        end,
+        delete_dir = function(path)
+            lfs.rmdir(path)
+        end,
+    }
+    local ok = downloader.delete_book(item.id, manifest, fs)
+    if ok then
+        UIManager:show(InfoMessage:new{ text = _("Book deleted successfully.") })
+    else
+        UIManager:show(InfoMessage:new{ text = _("Book not found in downloads.") })
+    end
 end
 
 function LibraryBrowserView:onCycleSort()

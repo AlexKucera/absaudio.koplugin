@@ -145,4 +145,77 @@ function manifest.getRecentBook()
     return recent
 end
 
+--- Check if a book is fully downloaded (all files complete)
+-- @param abs_item_id string
+-- @return boolean
+function manifest.isDownloaded(abs_item_id)
+    local entry = manifest.getBook(abs_item_id)
+    if not entry or not entry.files or #entry.files == 0 then
+        return false
+    end
+    for _, file in ipairs(entry.files) do
+        if file.status ~= "complete" then
+            return false
+        end
+    end
+    return true
+end
+
+--- Check if a book has any incomplete files (pending or partial)
+-- @param abs_item_id string
+-- @return boolean
+function manifest.hasIncompleteFiles(abs_item_id)
+    local entry = manifest.getBook(abs_item_id)
+    if not entry or not entry.files then return false end
+    for _, file in ipairs(entry.files) do
+        if file.status == "pending" or file.status == "partial" then
+            return true
+        end
+    end
+    return false
+end
+
+--- Get only the incomplete files for a book
+-- @param abs_item_id string
+-- @return table  array of file entries with pending/partial status
+function manifest.getIncompleteFiles(abs_item_id)
+    local entry = manifest.getBook(abs_item_id)
+    if not entry or not entry.files then return {} end
+    local result = {}
+    for _, file in ipairs(entry.files) do
+        if file.status == "pending" or file.status == "partial" then
+            table.insert(result, file)
+        end
+    end
+    return result
+end
+
+--- Get total size of all files for a book
+-- @param abs_item_id string
+-- @return number  total bytes
+function manifest.getTotalFileSize(abs_item_id)
+    local entry = manifest.getBook(abs_item_id)
+    if not entry or not entry.files then return 0 end
+    local total = 0
+    for _, file in ipairs(entry.files) do
+        total = total + (file.size or 0)
+    end
+    return total
+end
+
+--- Get total size of completed files for a book
+-- @param abs_item_id string
+-- @return number  bytes already downloaded
+function manifest.getDownloadedSize(abs_item_id)
+    local entry = manifest.getBook(abs_item_id)
+    if not entry or not entry.files then return 0 end
+    local total = 0
+    for _, file in ipairs(entry.files) do
+        if file.status == "complete" then
+            total = total + (file.size or 0)
+        end
+    end
+    return total
+end
+
 return manifest

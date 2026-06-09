@@ -46,6 +46,7 @@ They capture what was done, decisions & rationale, gotchas & fixes, and next ste
 | 2026-06-09 | issue | [issue20-main-lua-navigator-tests_log.md](docs/devlog/20260609-issue20-main-lua-navigator-tests_log.md) | Created `spec/test_main.lua` with 10 tests; navigator registration, onOpenDashboard wiring, dispatcher routing, first-run behavior; 196 total pass |
 
 <!-- write-log: session-log-index -->
+| 2026-06-09 | issue | [issue05-download-pipeline-tdd-and-ui-wiring_log.md](docs/devlog/20260609-issue05-download-pipeline-tdd-and-ui-wiring_log.md) | Created `absaudio/downloader.lua` with 52 tests across 11 TDD slices; added 5 manifest helpers; rewrote `_addDownloadStatus` with 3-state logic; wired download/delete buttons in library_browser; 262 total pass |
 
 | Date | Type | File | Summary |
 |------|------|------|----------|
@@ -68,7 +69,7 @@ They capture what was done, decisions & rationale, gotchas & fixes, and next ste
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **absaudio.koplugin** (399 symbols, 397 relationships, 0 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **absaudio.koplugin** (416 symbols, 415 relationships, 0 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

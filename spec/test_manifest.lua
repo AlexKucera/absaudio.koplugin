@@ -328,6 +328,180 @@ run_test("getRecentBook returns nil when no books exist", function()
 end)
 
 -- ============================================================
+-- Slice 4: Manifest helper queries
+-- ============================================================
+
+run_test("isDownloaded returns true when all files complete", function()
+    mock_settings = mock.create_lua_settings({})
+    manifest.init()
+
+    manifest.addBook({
+        abs_item_id = "li_abc123",
+        title = "Test Book",
+        author = "Author",
+        local_dir = "/tmp/test",
+        files = {
+            {filename = "part1.m4b", size = 1000, type = "audio", status = "complete"},
+            {filename = "part2.m4b", size = 2000, type = "audio", status = "complete"},
+        },
+        current_time = 0,
+        duration = 3600,
+        chapters = {},
+        is_finished = false,
+        last_synced_at = 0,
+    })
+
+    mock.assert_equals(manifest.isDownloaded("li_abc123"), true, "all complete → downloaded")
+end)
+
+run_test("isDownloaded returns false when some files pending", function()
+    mock_settings = mock.create_lua_settings({})
+    manifest.init()
+
+    manifest.addBook({
+        abs_item_id = "li_abc123",
+        title = "Test Book",
+        author = "Author",
+        local_dir = "/tmp/test",
+        files = {
+            {filename = "part1.m4b", size = 1000, type = "audio", status = "complete"},
+            {filename = "part2.m4b", size = 2000, type = "audio", status = "pending"},
+        },
+        current_time = 0,
+        duration = 3600,
+        chapters = {},
+        is_finished = false,
+        last_synced_at = 0,
+    })
+
+    mock.assert_equals(manifest.isDownloaded("li_abc123"), false, "some pending → not downloaded")
+end)
+
+run_test("isDownloaded returns false for unknown book", function()
+    mock_settings = mock.create_lua_settings({})
+    manifest.init()
+
+    mock.assert_equals(manifest.isDownloaded("nonexistent"), false, "unknown → not downloaded")
+end)
+
+run_test("hasIncompleteFiles returns true for partial files", function()
+    mock_settings = mock.create_lua_settings({})
+    manifest.init()
+
+    manifest.addBook({
+        abs_item_id = "li_abc123",
+        title = "Test Book",
+        author = "Author",
+        local_dir = "/tmp/test",
+        files = {
+            {filename = "part1.m4b", size = 1000, type = "audio", status = "partial"},
+        },
+        current_time = 0,
+        duration = 3600,
+        chapters = {},
+        is_finished = false,
+        last_synced_at = 0,
+    })
+
+    mock.assert_equals(manifest.hasIncompleteFiles("li_abc123"), true, "partial → incomplete")
+end)
+
+run_test("hasIncompleteFiles returns false for all complete", function()
+    mock_settings = mock.create_lua_settings({})
+    manifest.init()
+
+    manifest.addBook({
+        abs_item_id = "li_abc123",
+        title = "Test Book",
+        author = "Author",
+        local_dir = "/tmp/test",
+        files = {
+            {filename = "part1.m4b", size = 1000, type = "audio", status = "complete"},
+        },
+        current_time = 0,
+        duration = 3600,
+        chapters = {},
+        is_finished = false,
+        last_synced_at = 0,
+    })
+
+    mock.assert_equals(manifest.hasIncompleteFiles("li_abc123"), false, "all complete → not incomplete")
+end)
+
+run_test("getIncompleteFiles returns only pending/partial files", function()
+    mock_settings = mock.create_lua_settings({})
+    manifest.init()
+
+    manifest.addBook({
+        abs_item_id = "li_abc123",
+        title = "Test Book",
+        author = "Author",
+        local_dir = "/tmp/test",
+        files = {
+            {filename = "part1.m4b", size = 1000, type = "audio", status = "complete"},
+            {filename = "part2.m4b", size = 2000, type = "audio", status = "pending"},
+            {filename = "part3.m4b", size = 3000, type = "audio", status = "partial"},
+        },
+        current_time = 0,
+        duration = 3600,
+        chapters = {},
+        is_finished = false,
+        last_synced_at = 0,
+    })
+
+    local incomplete = manifest.getIncompleteFiles("li_abc123")
+    mock.assert_equals(#incomplete, 2, "two incomplete files")
+    mock.assert_equals(incomplete[1].filename, "part2.m4b", "first incomplete")
+    mock.assert_equals(incomplete[2].filename, "part3.m4b", "second incomplete")
+end)
+
+run_test("getTotalFileSize returns sum of all file sizes", function()
+    mock_settings = mock.create_lua_settings({})
+    manifest.init()
+
+    manifest.addBook({
+        abs_item_id = "li_abc123",
+        title = "Test Book",
+        author = "Author",
+        local_dir = "/tmp/test",
+        files = {
+            {filename = "part1.m4b", size = 1000, type = "audio", status = "complete"},
+            {filename = "part2.m4b", size = 2000, type = "audio", status = "pending"},
+        },
+        current_time = 0,
+        duration = 3600,
+        chapters = {},
+        is_finished = false,
+        last_synced_at = 0,
+    })
+
+    mock.assert_equals(manifest.getTotalFileSize("li_abc123"), 3000, "1000 + 2000 = 3000")
+end)
+
+run_test("getDownloadedSize returns sum of complete file sizes", function()
+    mock_settings = mock.create_lua_settings({})
+    manifest.init()
+
+    manifest.addBook({
+        abs_item_id = "li_abc123",
+        title = "Test Book",
+        author = "Author",
+        local_dir = "/tmp/test",
+        files = {
+            {filename = "part1.m4b", size = 1000, type = "audio", status = "complete"},
+            {filename = "part2.m4b", size = 2000, type = "audio", status = "pending"},
+        },
+        current_time = 0,
+        duration = 3600,
+        chapters = {},
+        is_finished = false,
+        last_synced_at = 0,
+    })
+
+    mock.assert_equals(manifest.getDownloadedSize("li_abc123"), 1000, "only complete file")
+end)
+
+-- ============================================================
 -- Summary
 -- ============================================================
 print(string.format("\n%d passed, %d failed", passed, failed))

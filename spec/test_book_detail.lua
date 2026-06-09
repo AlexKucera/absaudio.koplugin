@@ -161,6 +161,22 @@ package.loaded["manifest"] = {
     getBook = function(item_id)
         return mock_manifest_books[item_id]
     end,
+    isDownloaded = function(item_id)
+        local book = mock_manifest_books[item_id]
+        if not book or not book.files then return false end
+        for _, f in ipairs(book.files) do
+            if f.status ~= "complete" then return false end
+        end
+        return true
+    end,
+    hasIncompleteFiles = function(item_id)
+        local book = mock_manifest_books[item_id]
+        if not book or not book.files then return false end
+        for _, f in ipairs(book.files) do
+            if f.status == "pending" or f.status == "partial" then return true end
+        end
+        return false
+    end,
 }
 
 -- Mock cover_cache
@@ -624,6 +640,115 @@ run_test("prepare() returns basic item when offline but item has title/media", f
     mock.assert_equals(err, nil, "should not return error")
     mock.assert_equals(data.title, "Offline Book", "should preserve title")
     mock.assert_equals(data.media.duration, 1800, "should preserve media duration")
+end)
+
+-- ============================================================
+-- Test: Download status badge and button behavior
+-- ============================================================
+
+-- Helper: search content_group for text matching pattern (checks InputContainer children too)
+local function find_text_in_view(view, pattern)
+    for _, widget in ipairs(view.content_group or {}) do
+        if widget.text and widget.text:match(pattern) then return true end
+        -- Buttons are wrapped in InputContainer → [1] = TextWidget
+        if widget[1] and widget[1].text and widget[1].text:match(pattern) then return true end
+    end
+    return false
+end
+
+run_test("_addDownloadStatus shows ✓ Downloaded when all files complete", function()
+    local shown_widgets = {}
+    local orig_show = package.loaded["ui/uimanager"].show
+    package.loaded["ui/uimanager"].show = function(self, widget)
+        table.insert(shown_widgets, widget)
+    end
+
+    local item = {
+        id = "item_complete",
+        title = "Complete Book",
+        media = { duration = 3600, metadata = { title = "Complete Book" } },
+    }
+    mock_api_configured = false
+    mock_manifest_books = {
+        item_complete = {
+            abs_item_id = "item_complete",
+            files = {
+                { filename = "book.m4b", status = "complete" },
+            },
+        },
+    }
+
+    detail.show({ item = item,
+        on_download = function() end,
+        on_delete = function() end,
+    })
+
+    local view = shown_widgets[#shown_widgets]
+    mock.assert_equals(view ~= nil, true, "should have created a view")
+    mock.assert_equals(find_text_in_view(view, "Downloaded"), true, "should show Downloaded badge")
+    mock.assert_equals(find_text_in_view(view, "Delete"), true, "should show Delete button when downloaded")
+
+    package.loaded["ui/uimanager"].show = orig_show
+end)
+
+run_test("_addDownloadStatus shows Resume when files incomplete", function()
+    local shown_widgets = {}
+    local orig_show = package.loaded["ui/uimanager"].show
+    package.loaded["ui/uimanager"].show = function(self, widget)
+        table.insert(shown_widgets, widget)
+    end
+
+    local item = {
+        id = "item_partial",
+        title = "Partial Book",
+        media = { duration = 3600, metadata = { title = "Partial Book" } },
+    }
+    mock_api_configured = false
+    mock_manifest_books = {
+        item_partial = {
+            abs_item_id = "item_partial",
+            files = {
+                { filename = "part1.m4b", status = "complete" },
+                { filename = "part2.m4b", status = "partial" },
+            },
+        },
+    }
+
+    detail.show({ item = item,
+        on_download = function() end,
+    })
+
+    local view = shown_widgets[#shown_widgets]
+    mock.assert_equals(view ~= nil, true, "should have created a view")
+    mock.assert_equals(find_text_in_view(view, "Resume"), true, "should show Resume button")
+
+    package.loaded["ui/uimanager"].show = orig_show
+end)
+
+run_test("_addDownloadStatus shows Download button when not in manifest", function()
+    local shown_widgets = {}
+    local orig_show = package.loaded["ui/uimanager"].show
+    package.loaded["ui/uimanager"].show = function(self, widget)
+        table.insert(shown_widgets, widget)
+    end
+
+    local item = {
+        id = "item_new",
+        title = "New Book",
+        media = { duration = 3600, metadata = { title = "New Book" } },
+    }
+    mock_api_configured = false
+    mock_manifest_books = {}
+
+    detail.show({ item = item,
+        on_download = function() end,
+    })
+
+    local view = shown_widgets[#shown_widgets]
+    mock.assert_equals(view ~= nil, true, "should have created a view")
+    mock.assert_equals(find_text_in_view(view, "Download"), true, "should show Download button")
+
+    package.loaded["ui/uimanager"].show = orig_show
 end)
 
 -- ============================================================

@@ -4,7 +4,7 @@
 --
 -- Public API:
 --   detail.show(data)
---     data: { item=..., on_download=fn }
+--     data: { item=..., on_download=fn, on_delete=fn }
 --
 -- When show() is called, it first tries to fetch expanded item details from ABS.
 -- If that fails and the book is downloaded, it falls back to manifest data.
@@ -347,27 +347,134 @@ function BookDetailView:_addMetadata()
 end
 
 ------------------------------------------------------------------------
--- Download status badge
+-- Download status badge and action buttons
+-- Three states:
+--   1. All files complete → ✓ Downloaded + Delete button
+--   2. Some files incomplete → ⚠ Incomplete download + Resume button + Delete button
+--   3. Not in manifest → Not downloaded + Download button
 ------------------------------------------------------------------------
 function BookDetailView:_addDownloadStatus()
     local item_id = self.item.id
-    local is_downloaded = false
+    local has_book = false
+    local is_complete = false
+    local has_incomplete = false
 
     if has_manifest then
         local book = manifest.getBook(item_id)
         if book then
-            is_downloaded = true
+            has_book = true
+            is_complete = manifest.isDownloaded(item_id)
+            has_incomplete = manifest.hasIncompleteFiles(item_id)
         end
     end
 
-    if is_downloaded then
+    if has_book and is_complete then
+        -- State 1: Fully downloaded
         local badge = TextWidget:new{
             text = "✓ " .. _("Downloaded"),
             face = Font:getFace("cfont", 14),
             fgcolor = Blitbuffer.COLOR_DARK_GREEN,
         }
         table.insert(self.content_group, badge)
+
+        -- Show Delete button
+        if self.on_delete then
+            table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
+            local delete_btn = TextWidget:new{
+                text = _("🗑 Delete"),
+                face = Font:getFace("cfont", 16),
+                fgcolor = Blitbuffer.COLOR_DARK_GRAY,
+            }
+            local tap_container = InputContainer:new{
+                dimen = Geom:new{
+                    w = self.content_width,
+                    h = delete_btn:getSize().h + Size.padding.default,
+                },
+            }
+            tap_container.ges_events.TapDelete = {
+                GestureRange:new{
+                    ges = "tap",
+                    range = tap_container.dimen,
+                },
+            }
+            local item = self.item
+            local on_delete_cb = self.on_delete
+            function tap_container:onTapDelete()
+                if on_delete_cb then on_delete_cb(item) end
+                return true
+            end
+            tap_container[1] = delete_btn
+            table.insert(self.content_group, tap_container)
+        end
+    elseif has_book and has_incomplete then
+        -- State 2: Incomplete download
+        local badge = TextWidget:new{
+            text = "⚠ " .. _("Incomplete download"),
+            face = Font:getFace("cfont", 14),
+            fgcolor = Blitbuffer.COLOR_DARK_GRAY,
+        }
+        table.insert(self.content_group, badge)
+
+        -- Show Resume + Delete buttons
+        if self.on_download then
+            table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
+            local resume_btn = TextWidget:new{
+                text = _("⬇ Resume"),
+                face = Font:getFace("cfont", 16),
+                fgcolor = Blitbuffer.COLOR_BLUE,
+            }
+            local tap_container = InputContainer:new{
+                dimen = Geom:new{
+                    w = self.content_width,
+                    h = resume_btn:getSize().h + Size.padding.default,
+                },
+            }
+            tap_container.ges_events.TapResume = {
+                GestureRange:new{
+                    ges = "tap",
+                    range = tap_container.dimen,
+                },
+            }
+            local item = self.item
+            local on_download_cb = self.on_download
+            function tap_container:onTapResume()
+                if on_download_cb then on_download_cb(item) end
+                return true
+            end
+            tap_container[1] = resume_btn
+            table.insert(self.content_group, tap_container)
+        end
+
+        if self.on_delete then
+            table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
+            local delete_btn = TextWidget:new{
+                text = _("🗑 Delete"),
+                face = Font:getFace("cfont", 16),
+                fgcolor = Blitbuffer.COLOR_DARK_GRAY,
+            }
+            local tap_container = InputContainer:new{
+                dimen = Geom:new{
+                    w = self.content_width,
+                    h = delete_btn:getSize().h + Size.padding.default,
+                },
+            }
+            tap_container.ges_events.TapDelete = {
+                GestureRange:new{
+                    ges = "tap",
+                    range = tap_container.dimen,
+                },
+            }
+            local item = self.item
+            local on_delete_cb = self.on_delete
+            function tap_container:onTapDelete()
+                if on_delete_cb then on_delete_cb(item) end
+                return true
+            end
+            tap_container[1] = delete_btn
+            table.insert(self.content_group, tap_container)
+        end
     else
+        -- State 3: Not downloaded
         local badge = TextWidget:new{
             text = _("Not downloaded"),
             face = Font:getFace("cfont", 14),
@@ -589,7 +696,7 @@ function detail.show(data)
     local item = data.item
     if not item then return nil end
     local on_download = data.on_download
-
+    local on_delete = data.on_delete
     abs_logger.info("Showing book detail: " .. (item.title or item.id or "unknown"))
 
     -- Initialize manifest for potential fallback
@@ -609,7 +716,7 @@ function detail.show(data)
             UIManager:close(loading)
             local prepared, err = detail.prepare(item)
             if prepared then
-                local view = detail._renderView(prepared, on_download)
+                local view = detail._renderView(prepared, on_download, on_delete)
                 if has_navigator then
                     nav._setCurrent(view)
                 end
@@ -625,7 +732,7 @@ function detail.show(data)
         -- Synchronous path
         local prepared, err = detail.prepare(item)
         if prepared then
-            return detail._renderView(prepared, on_download)
+            return detail._renderView(prepared, on_download, on_delete)
         else
             error_handler.show(err.type or "network", err.message or _("Unable to load book details."))
             return nil
@@ -636,10 +743,11 @@ end
 ------------------------------------------------------------------------
 -- Render the detail view widget
 ------------------------------------------------------------------------
-function detail._renderView(item, on_download)
+function detail._renderView(item, on_download, on_delete)
     local view = BookDetailView:new{
         item = item,
         on_download = on_download,
+        on_delete = on_delete,
     }
     UIManager:show(view)
     UIManager:setDirty(view, "full")

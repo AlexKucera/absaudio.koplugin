@@ -562,6 +562,8 @@ run_test("onBookTap calls nav.push with detail screen", function()
     mock.assert_equals(#pushed, 1, "should have called nav.push once")
     mock.assert_equals(pushed[1].name, "detail", "should push 'detail' screen")
     mock.assert_equals(pushed[1].data.item.id, "li_001", "should pass the tapped item")
+    mock.assert_equals(type(pushed[1].data.on_download), "function", "should pass on_download callback")
+    mock.assert_equals(type(pushed[1].data.on_delete), "function", "should pass on_delete callback")
 
     package.loaded["absaudio/navigator"].push = function() end
 end)
