@@ -452,7 +452,7 @@ function LibraryBrowserView:_addPageNav()
 
     -- Page info text
     local page_text = TextWidget:new{
-        text = _(string.format("Page %d / %d", self.current_page, result.total_pages)),
+        text = _(string.format("Page %d / %d", self.current_page, total_pages)),
         face = Font:getFace("cfont", 14),
         fgcolor = Blitbuffer.COLOR_DARK_GRAY,
     }
@@ -486,7 +486,7 @@ function LibraryBrowserView:_addPageNav()
     }
 
     -- Next button
-    local next_enabled = self.current_page < result.total_pages
+    local next_enabled = self.current_page < total_pages
     local next_text = TextWidget:new{
         text = _("Next →"),
         face = Font:getFace("cfont", 16),
