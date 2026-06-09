@@ -16,6 +16,7 @@ local _stack = {}         -- array of {name, data} entries
 local _current = nil      -- reference to the currently-shown widget
 local _current_name = nil -- name of the current screen
 local _current_data = nil -- data passed to the current screen's show_fn
+local _deferred_close = nil -- widget to close when async screen's _setCurrent fires
 
 --- Clear all navigator state (for testing)
 function nav._reset()
@@ -24,6 +25,7 @@ function nav._reset()
     _current = nil
     _current_name = nil
     _current_data = nil
+    _deferred_close = nil
 end
 
 --- Register a screen by name with its show function
@@ -55,11 +57,11 @@ function nav.push(name, data)
         table.insert(_stack, { name = _current_name, data = _current_data })
     end
 
-    -- Close current widget if one is active
-    if _current then
-        local UIManager = require("ui/uimanager")
-        UIManager:close(_current)
-    end
+    -- Defer closing the previous widget:
+    --   - Sync screens: close after show_fn returns (new widget already shown)
+    --   - Async screens: close in _setCurrent when the real widget is ready
+    -- This avoids a flash of the underlying KOReader view between transitions.
+    local deferred_close = _current
     _current = nil  -- clear before show_fn; async screens set it later via _setCurrent
 
     -- Show the new screen
@@ -73,18 +75,10 @@ function nav.push(name, data)
         -- show_fn failed — rollback to previous screen
         abs_logger.warn("navigator: show_fn for '" .. tostring(name) .. "' returned nil, rolling back")
         table.remove(_stack)
-        if prev_name then
-            local prev_fn = _screens[prev_name]
-            if prev_fn then
-                _current = prev_fn(prev_data)
-                _current_name = prev_name
-                _current_data = prev_data
-                return
-            end
-        end
-        _current = nil
-        _current_name = nil
-        _current_data = nil
+        -- Keep deferred_close visible — it's the screen we're rolling back to
+        _current = deferred_close
+        _current_name = prev_name
+        _current_data = prev_data
         return
     end
 
@@ -92,7 +86,15 @@ function nav.push(name, data)
     -- _setCurrent is called. _current_name/data are set so the stack
     -- and pop() work correctly.
     if result ~= true then
+        -- Sync screen: new widget already shown by show_fn, now close old
+        if deferred_close then
+            local UIManager = require("ui/uimanager")
+            UIManager:close(deferred_close)
+        end
         _current = result
+    else
+        -- Async screen: keep old widget visible until _setCurrent fires
+        _deferred_close = deferred_close
     end
     _current_name = name
     _current_data = data
@@ -104,10 +106,18 @@ function nav.pop()
         return  -- empty stack, no-op
     end
 
-    -- Close current widget
+    -- Close current widget (may be nil for failed async screens)
     if _current then
         local UIManager = require("ui/uimanager")
         UIManager:close(_current)
+    end
+
+    -- If an async screen was in progress with a deferred-close widget
+    -- visible, that widget IS the previous screen we're popping back to
+    -- (e.g., library browser visible behind a failed detail loading).
+    -- Don't close it — just cancel the deferred state.
+    if _deferred_close then
+        _deferred_close = nil
     end
 
     -- Pop the previous entry
@@ -143,8 +153,9 @@ function nav.reset(name, data)
         UIManager:close(_current)
     end
 
-    -- Clear the stack
+    -- Clear the stack and any pending deferred close
     _stack = {}
+    _deferred_close = nil
 
     -- Show the screen
     _current = show_fn(data)
@@ -156,6 +167,11 @@ end
 --- Use when a screen recreates its own widget (e.g., page navigation refresh).
 --- @param widget table  the new widget instance
 function nav._setCurrent(widget)
+    if _deferred_close then
+        local UIManager = require("ui/uimanager")
+        UIManager:close(_deferred_close)
+        _deferred_close = nil
+    end
     _current = widget
 end
 

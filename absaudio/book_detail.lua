@@ -615,6 +615,9 @@ function detail.show(data)
                 end
             else
                 error_handler.show(err.type or "network", err.message or _("Unable to load book details."))
+                if has_navigator then
+                    nav.pop()
+                end
             end
         end)
         return true  -- async in progress; _setCurrent updates nav later
