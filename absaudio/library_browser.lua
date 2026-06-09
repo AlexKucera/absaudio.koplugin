@@ -20,6 +20,7 @@ local HorizontalSpan = require("ui/widget/horizontalspan")
 local ImageWidget = require("ui/widget/imagewidget")
 local IconWidget = require("ui/widget/iconwidget")
 local InfoMessage = require("ui/widget/infomessage")
+local ConfirmBox = require("ui/widget/confirmbox")
 local InputDialog = require("ui/widget/inputdialog")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local LeftContainer = require("ui/widget/container/leftcontainer")
@@ -45,6 +46,7 @@ local has_navigator, nav = pcall(require, "absaudio/navigator")
 local has_manifest, manifest = pcall(require, "manifest")
 local has_config, config = pcall(require, "config")
 local downloader = require("absaudio/downloader")
+local has_progress, progress = pcall(require, "absaudio/download_progress")
 
 local browser = {}
 
@@ -588,8 +590,11 @@ function LibraryBrowserView:onBookTap(item)
     if has_navigator then
         nav.push("detail", {
             item = item,
-            on_download = function(book_item)
-                self:_onDownloadBook(book_item)
+            on_download = function(data)
+                -- data may be a plain item or { item=..., ebook_only=true }
+                local book_item = data.item or data
+                local ebook_only = data.ebook_only or false
+                self:_onDownloadBook(book_item, ebook_only)
             end,
             on_delete = function(book_item)
                 self:_onDeleteBook(book_item)
@@ -603,25 +608,215 @@ end
 -- Download handler — triggers download pipeline
 -- @param item table  ABS item to download
 ------------------------------------------------------------------------
-function LibraryBrowserView:_onDownloadBook(item)
-    abs_logger.info("Download requested: " .. (item.title or item.id))
-    -- TODO: coroutine-based chunked download with progress widget
-    -- For now, prepare the download (creates manifest entry)
+function LibraryBrowserView:_onDownloadBook(item, ebook_only)
+    abs_logger.info("Download requested: " .. (item.title or item.id)
+        .. (ebook_only and " (ebook)" or ""))
     if not has_manifest or not has_config then
         UIManager:show(InfoMessage:new{ text = _("Download not available") })
         return
     end
     manifest.init()
+
+    -- Ebook download path
+    if ebook_only then
+        local ok, result = downloader.prepare_ebook_download(item, manifest, config)
+        if not ok then
+            UIManager:show(InfoMessage:new{
+                text = _("No ebook files found for this book."),
+                timeout = 3,
+            })
+            return
+        end
+        -- TODO: schedule actual ebook file download (same pipeline as audio)
+        UIManager:show(InfoMessage:new{
+            text = _("Ebook download prepared."),
+            timeout = 3,
+        })
+        return
+    end
+
     local ok, result = downloader.prepare_download(item, manifest, config)
     if not ok then
         if result == "already_downloaded" then
-            UIManager:show(InfoMessage:new{ text = _("Already downloaded. Use Delete first to re-download.") })
+            -- Gap 3: Re-download prompt
+            UIManager:show(ConfirmBox:new{
+                text = _("Already downloaded. Re-download?"),
+                ok_text = _("Re-download"),
+                ok_callback = function()
+                    local lfs = _G.lfs or require("lfs")
+                    local fs = {
+                        delete_file = function(path) os.remove(path) end,
+                        delete_dir = function(path) lfs.rmdir(path) end,
+                    }
+                    downloader.delete_book(item.id, manifest, fs)
+                    self:_onDownloadBook(item)
+                end,
+            })
         else
             UIManager:show(InfoMessage:new{ text = _("No audio files found for this book.") })
         end
         return
     end
-    UIManager:show(InfoMessage:new{ text = _("Download prepared: " .. #result.files .. " files") })
+
+    -- Gap 2: Free space check
+    local needed = downloader.calculate_download_size(result.files)
+    if needed > 0 then
+        local download_dir = config.get("download_dir") or "/tmp"
+        local free_bytes = downloader.get_free_space(download_dir)
+        if free_bytes and not downloader.check_free_space(needed, free_bytes) then
+            UIManager:show(InfoMessage:new{
+                text = string.format(_("Insufficient disk space. Need %s, have %s."),
+                    downloader.format_bytes(needed), downloader.format_bytes(free_bytes)),
+                timeout = 5,
+            })
+            return
+        end
+    end
+
+    -- Gap 8: Full download pipeline with progress widget
+    local state = downloader.create_download_state()
+    state.start_time = os.time()
+    state.total_files = #result.files
+    state.total_bytes = downloader.calculate_download_size(result.files)
+
+    -- Show progress widget
+    if has_progress then
+        progress.show({
+            state = state,
+            on_cancel = function()
+                state:cancel()
+            end,
+        })
+    end
+
+    -- Build deps
+    local lfs = _G.lfs or require("lfs")
+    local deps = {
+        manifest = manifest,
+        api = require("api"),
+        fs = {
+            mkdir = function(path)
+                -- Recursively create directory
+                local parts = {}
+                for part in path:gmatch("[^/]+") do
+                    table.insert(parts, part)
+                end
+                local current = ""
+                for _, part in ipairs(parts) do
+                    current = current .. "/" .. part
+                    if not lfs.attributes(current) then
+                        lfs.mkdir(current)
+                    end
+                end
+            end,
+            open = function(path, mode)
+                return io.open(path, mode)
+            end,
+            get_file_size = function(path)
+                local attr = lfs.attributes(path)
+                return attr and attr.size or nil
+            end,
+        },
+        state = state,
+    }
+
+    -- Get files to download
+    local files = downloader.select_files_to_download(result.files)
+    local self_ref = self
+    local entry = result
+
+    -- Schedule file-by-file download (coroutine-based for UI responsiveness)
+    local function schedule_next(idx)
+        if idx > #files or state:is_cancelled() then
+            -- Close progress widget
+            if has_progress then progress.close() end
+
+            local msg = state:is_cancelled()
+                and _("Download cancelled.")
+                or _("Download complete!")
+            UIManager:show(InfoMessage:new{ text = msg, timeout = 3 })
+
+            -- Refresh detail view by popping and re-pushing
+            if has_navigator then
+                nav.pop()
+                UIManager:scheduleIn(0.1, function()
+                    nav.push("detail", {
+                        item = item,
+                        on_download = function(b) self_ref:_onDownloadBook(b) end,
+                        on_delete = function(b) self_ref:_onDeleteBook(b) end,
+                    })
+                end)
+            end
+            return
+        end
+
+        state.current_file = idx
+
+        -- Use chunked (coroutine-based) download for UI responsiveness
+        local handle, err = downloader.start_chunked_download(entry, files[idx], deps)
+        if not handle then
+            if has_progress then progress.close() end
+            UIManager:show(InfoMessage:new{
+                text = _("Download failed: ") .. tostring(err),
+                timeout = 5,
+            })
+            return
+        end
+
+        -- Pump the coroutine on each UI tick
+        local function pump()
+            if state:is_cancelled() then
+                handle:cancel()
+                handle:finalize()
+                if has_progress then progress.close() end
+                UIManager:show(InfoMessage:new{ text = _("Download cancelled."), timeout = 3 })
+                if has_navigator then
+                    nav.pop()
+                    UIManager:scheduleIn(0.1, function()
+                        nav.push("detail", {
+                            item = item,
+                            on_download = function(b) self_ref:_onDownloadBook(b) end,
+                            on_delete = function(b) self_ref:_onDeleteBook(b) end,
+                        })
+                    end)
+                end
+                return
+            end
+
+            local still_running = handle:pump()
+
+            -- Update progress UI between chunks
+            if has_progress then progress.update(state) end
+
+            if still_running then
+                -- Yield back to event loop, resume on next tick
+                UIManager:scheduleIn(0, pump)
+            else
+                -- Download finished for this file
+                local ok, reason = handle:finalize()
+                if not ok then
+                    if has_progress then progress.close() end
+                    UIManager:show(InfoMessage:new{
+                        text = _("Download failed: ") .. tostring(reason),
+                        timeout = 5,
+                    })
+                    return
+                end
+
+                -- Schedule next file
+                UIManager:scheduleIn(0, function()
+                    schedule_next(idx + 1)
+                end)
+            end
+        end
+
+        -- Start pumping
+        UIManager:scheduleIn(0, pump)
+    end
+
+    UIManager:scheduleIn(0.1, function()
+        schedule_next(1)
+    end)
 end
 
 ------------------------------------------------------------------------
@@ -635,22 +830,35 @@ function LibraryBrowserView:_onDeleteBook(item)
         return
     end
     manifest.init()
-    -- TODO: confirmation dialog before delete
-    local lfs = _G.lfs or require("lfs")
-    local fs = {
-        delete_file = function(path)
-            os.remove(path)
+    -- Gap 4: Delete confirmation dialog
+    UIManager:show(ConfirmBox:new{
+        text = _("Delete this downloaded book?"),
+        ok_text = _("Delete"),
+        ok_callback = function()
+            local lfs = _G.lfs or require("lfs")
+            local fs = {
+                delete_file = function(path) os.remove(path) end,
+                delete_dir = function(path) lfs.rmdir(path) end,
+            }
+            local ok = downloader.delete_book(item.id, manifest, fs)
+            if ok then
+                UIManager:show(InfoMessage:new{ text = _("Book deleted successfully."), timeout = 3 })
+            else
+                UIManager:show(InfoMessage:new{ text = _("Book not found in downloads."), timeout = 3 })
+            end
+            -- Refresh detail view by popping and re-pushing
+            if has_navigator then
+                nav.pop()
+                UIManager:scheduleIn(0.1, function()
+                    nav.push("detail", {
+                        item = item,
+                        on_download = function(b) self:_onDownloadBook(b) end,
+                        on_delete = function(b) self:_onDeleteBook(b) end,
+                    })
+                end)
+            end
         end,
-        delete_dir = function(path)
-            lfs.rmdir(path)
-        end,
-    }
-    local ok = downloader.delete_book(item.id, manifest, fs)
-    if ok then
-        UIManager:show(InfoMessage:new{ text = _("Book deleted successfully.") })
-    else
-        UIManager:show(InfoMessage:new{ text = _("Book not found in downloads.") })
-    end
+    })
 end
 
 function LibraryBrowserView:onCycleSort()

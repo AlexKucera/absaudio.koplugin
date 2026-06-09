@@ -330,20 +330,28 @@ end
 -- @param item_id string  ABS item ID
 -- @param ino string  file inode number
 -- @param sink function  ltn12 sink to receive data
+-- @param extra_headers table|nil  optional extra headers (e.g. Range for resume)
 -- @return boolean ok
 -- @return number|error  status code or error info
-function api.downloadFile(item_id, ino, sink)
+function api.downloadFile(item_id, ino, sink, extra_headers)
     local path = "/api/items/" .. item_id .. "/file/" .. ino
     abs_logger.verbose("GET " .. path)
 
     set_timeout(CONNECT_TIMEOUT, DOWNLOAD_TIMEOUT)
 
+    local headers = {
+        ["Accept"] = "*/*",
+    }
+    if extra_headers then
+        for k, v in pairs(extra_headers) do
+            headers[k] = v
+        end
+    end
+
     local request = {
         url = server_url .. path .. "?token=" .. (auth_token or ""),
         method = "GET",
-        headers = {
-            ["Accept"] = "*/*",
-        },
+        headers = headers,
         sink = sink,
     }
 

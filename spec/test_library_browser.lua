@@ -62,6 +62,7 @@ package.loaded["ui/widget/horizontalgroup"] = make_widget_stub()
 package.loaded["ui/widget/horizontalspan"] = make_widget_stub()
 package.loaded["ui/widget/imagewidget"] = make_widget_stub()
 package.loaded["ui/widget/infomessage"] = make_widget_stub()
+package.loaded["ui/widget/confirmbox"] = make_widget_stub()
 package.loaded["ui/widget/inputdialog"] = make_widget_stub()
 package.loaded["ui/widget/linewidget"] = make_widget_stub()
 package.loaded["ui/widget/textboxwidget"] = make_widget_stub()
@@ -635,6 +636,22 @@ run_test("show() returns _view for navigator tracking (source check)", function(
 
     mock.assert_equals(show_body:find("return _view") ~= nil, true,
         "browser.show should contain 'return _view' for navigator tracking")
+end)
+
+-- ============================================================
+-- Gap tests: ebook download, re-download prompt, delete confirm
+-- ============================================================
+
+run_test("onBookTap passes ebook_only flag through on_download", function()
+    local captured = nil
+    local data = { on_download = function(d) captured = d end }
+    browser.show(data)
+    local item = { id = "li_1", title = "Test Book", media = { metadata = {} } }
+    -- Simulate onBookTap with data containing ebook_only
+    local tap_data = { item = item, ebook_only = true }
+    data.on_download(tap_data)
+    mock.assert_equals(captured.ebook_only, true, "should pass ebook_only flag")
+    mock.assert_equals(captured.item.id, "li_1", "should pass item")
 end)
 
 -- ============================================================

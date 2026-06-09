@@ -752,10 +752,78 @@ run_test("_addDownloadStatus shows Download button when not in manifest", functi
 end)
 
 -- ============================================================
--- Summary
+-- Gap 5: Ebook download button
 -- ============================================================
-print(string.format("\n%d passed, %d failed", passed, failed))
 
+run_test("_addEbookFiles adds download button when on_download set", function()
+    local item = {
+        id = "item_ebook",
+        title = "Ebook Book",
+        mediaType = "book",
+        media = { duration = 3600, metadata = { title = "Ebook Book", authorName = "Author" } },
+    }
+
+    -- Use sync path (no API) with item that has ebookFiles from mock
+    mock_api_configured = false
+    mock_manifest_books = {}
+
+    -- Add ebookFiles directly to item so _addEbookFiles sees them
+    item.ebookFiles = {
+        { filename = "book.epub", format = "epub", size = 1048576 },
+    }
+
+    local download_called = false
+    local download_data = nil
+
+    local view = detail.show({
+        item = item,
+        on_download = function(data)
+            download_called = true
+            download_data = data
+        end,
+    })
+
+    -- Verify that the view was created
+    mock.assert_equals(view ~= nil, true, "view should exist")
+
+    -- Check that the ebook button text is in the view
+    mock.assert_equals(find_text_in_view(view, "Ebook"), true, "should show Download Ebook button")
+end)
+
+run_test("_addEbookFiles detects ebook from media.ebookFile (ABS format)", function()
+    local item = {
+        id = "item_abs_ebook",
+        title = "ABS Ebook Book",
+        mediaType = "book",
+        media = {
+            duration = 3600,
+            metadata = { title = "ABS Ebook Book", authorName = "Author" },
+            ebookFile = {
+                ino = "1590509",
+                metadata = {
+                    filename = "Oathbringer.pdf",
+                    ext = ".pdf",
+                    size = 17386979,
+                },
+                ebookFormat = "pdf",
+            },
+        },
+    }
+
+    mock_api_configured = false
+    mock_manifest_books = {}
+
+    local view = detail.show({
+        item = item,
+        on_download = function(data) end,
+        on_delete = function(data) end,
+    })
+
+    -- Should detect the ebook from media.ebookFile and show download button
+    mock.assert_equals(view ~= nil, true, "should have created a view")
+    mock.assert_equals(find_text_in_view(view, "Oathbringer.pdf"), true,
+        "should show ebook filename from media.ebookFile")
+end)
 if #errors > 0 then
     print("\nFailures:")
     for _, e in ipairs(errors) do
@@ -763,3 +831,4 @@ if #errors > 0 then
     end
     os.exit(1)
 end
+print(string.format("\n%d passed, %d failed", passed, failed))

@@ -172,7 +172,19 @@ function BookDetailView:init()
     end
 
     -- Ebook/PDF files section
-    local ebook_files = self.item.ebookFiles or {}
+    -- ABS returns media.ebookFile (singular object), not ebookFiles (plural array)
+    local ebook_files = {}
+    if self.item.media and self.item.media.ebookFile then
+        local ef = self.item.media.ebookFile
+        table.insert(ebook_files, {
+            filename = ef.metadata and ef.metadata.filename or "ebook",
+            format = ef.ebookFormat or (ef.metadata and ef.metadata.ext and ef.metadata.ext:gsub("^%.", "")) or "?",
+            size = ef.metadata and ef.metadata.size or 0,
+            ino = ef.ino,
+        })
+    elseif self.item.ebookFiles then
+        ebook_files = self.item.ebookFiles
+    end
     if #ebook_files > 0 then
         self:_addEbookFiles(ebook_files)
         widget_helpers.addSeparator(self.content_group, self.content_width)
@@ -608,11 +620,40 @@ function BookDetailView:_addEbookFiles(ebook_files)
         table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
     end
 
+    -- Gap 5: Ebook download button
+    if self.on_download then
+        table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
+        local ebook_btn = TextWidget:new{
+            text = _("\226\175\135 Download Ebook"),
+            face = Font:getFace("cfont", 16),
+            fgcolor = Blitbuffer.COLOR_BLUE,
+        }
+        local tap_container = InputContainer:new{
+            dimen = Geom:new{
+                w = self.content_width,
+                h = ebook_btn:getSize().h + Size.padding.default,
+            },
+        }
+        tap_container.ges_events.TapEbook = {
+            GestureRange:new{
+                ges = "tap",
+                range = tap_container.dimen,
+            },
+        }
+        local item = self.item
+        local on_download_cb = self.on_download
+        function tap_container:onTapEbook()
+            if on_download_cb then
+                on_download_cb({ item = item, ebook_only = true })
+            end
+            return true
+        end
+        tap_container[1] = ebook_btn
+        table.insert(self.content_group, tap_container)
+    end
+
     table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.default })
 end
-
-------------------------------------------------------------------------
--- Chapters section (tappable table of contents)
 ------------------------------------------------------------------------
 function BookDetailView:_addChapters(chapters)
     self:_addSectionHeader(_("Chapters"))

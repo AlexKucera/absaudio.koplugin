@@ -305,9 +305,11 @@ end
 -- @return table  array of ebook file entries
 ------------------------------------------------------------------------
 function downloader.get_ebook_files(item)
-    if not item or not item.media or not item.media.ebooks then return {} end
+    if not item or not item.media then return {} end
     local result = {}
-    for _, ef in ipairs(item.media.ebooks) do
+    -- ABS returns media.ebookFile (singular object), not media.ebooks (array)
+    if item.media.ebookFile then
+        local ef = item.media.ebookFile
         local meta = ef.metadata or {}
         table.insert(result, {
             ino = ef.ino,
@@ -315,6 +317,16 @@ function downloader.get_ebook_files(item)
             ext = meta.ext or "",
             size = meta.size or 0,
         })
+    elseif item.media.ebooks then
+        for _, ef in ipairs(item.media.ebooks) do
+            local meta = ef.metadata or {}
+            table.insert(result, {
+                ino = ef.ino,
+                filename = meta.filename or "unknown",
+                ext = meta.ext or "",
+                size = meta.size or 0,
+            })
+        end
     end
     return result
 end
@@ -391,6 +403,270 @@ function downloader.reconcile_manifest(manifest, fs)
             end
         end
     end
+end
+
+------------------------------------------------------------------------
+-- Execute download: download all pending/partial files in a manifest entry
+-- @param entry table  manifest book entry with files array
+-- @param deps table  { manifest, api, fs, state, on_progress }
+--   manifest: { updateFileStatus(id, filename, status) }
+--   api: { downloadFile(item_id, ino, sink, extra_headers) -> ok, result }
+--   fs: { mkdir(path), open(path, mode) -> file, get_file_size(path) }
+--   state: from create_download_state()
+--   on_progress: function(state) called after each file
+-- @return boolean ok
+-- @return string|nil  reason on failure
+------------------------------------------------------------------------
+function downloader.execute_download(entry, deps)
+    local files_to_download = downloader.select_files_to_download(entry.files)
+    local state = deps.state
+    state.total_files = #files_to_download
+    state.total_bytes = downloader.calculate_download_size(entry.files)
+
+    for i, file in ipairs(files_to_download) do
+        if state:is_cancelled() then
+            return false, "cancelled"
+        end
+
+        state.current_file = i
+
+        -- Create directory
+        deps.fs.mkdir(entry.local_dir)
+
+        -- Determine open mode and range header
+        local open_mode = "wb"
+        local extra_headers = nil
+        local local_size = deps.fs.get_file_size(entry.local_dir .. "/" .. file.filename) or 0
+
+        if file.status == "partial" and local_size > 0 and local_size < file.size then
+            open_mode = "ab"
+            extra_headers = { ["Range"] = "bytes=" .. tostring(local_size) .. "-" }
+        end
+
+        -- Open file for writing
+        local file_handle = deps.fs.open(entry.local_dir .. "/" .. file.filename, open_mode)
+        if not file_handle then
+            deps.manifest.updateFileStatus(entry.abs_item_id, file.filename, "partial")
+            return false, "file_open_error"
+        end
+
+        -- Create sink that writes chunks and updates state
+        local sink = function(chunk)
+            if chunk then
+                file_handle:write(chunk)
+                state.bytes_downloaded = state.bytes_downloaded + #chunk
+            end
+            return true
+        end
+
+        -- Download the file
+        local ok, result = deps.api.downloadFile(entry.abs_item_id, file.ino, sink, extra_headers)
+
+        file_handle:close()
+
+        if ok then
+            deps.manifest.updateFileStatus(entry.abs_item_id, file.filename, "complete")
+        else
+            deps.manifest.updateFileStatus(entry.abs_item_id, file.filename, "partial")
+            return false, "download_failed"
+        end
+
+        if deps.on_progress then
+            deps.on_progress(state)
+        end
+    end
+
+    return true, nil
+end
+
+------------------------------------------------------------------------
+-- Execute download of a single file (for per-file scheduling in UI)
+-- @param entry table  manifest book entry
+-- @param file table   single file entry to download
+-- @param deps table   { manifest, api, fs, state }
+--   Same as execute_download deps but on_progress is not used here.
+-- @return boolean ok
+-- @return string|nil  reason on failure
+------------------------------------------------------------------------
+function downloader.execute_single_file_download(entry, file, deps)
+    deps.fs.mkdir(entry.local_dir)
+
+    local open_mode = "wb"
+    local extra_headers = nil
+    local local_size = deps.fs.get_file_size(entry.local_dir .. "/" .. file.filename) or 0
+
+    if file.status == "partial" and local_size > 0 and local_size < file.size then
+        open_mode = "ab"
+        extra_headers = { ["Range"] = "bytes=" .. tostring(local_size) .. "-" }
+    end
+
+    local file_handle = deps.fs.open(entry.local_dir .. "/" .. file.filename, open_mode)
+    if not file_handle then
+        deps.manifest.updateFileStatus(entry.abs_item_id, file.filename, "partial")
+        return false, "file_open_error"
+    end
+
+    local sink = function(chunk)
+        if chunk then
+            file_handle:write(chunk)
+            deps.state.bytes_downloaded = deps.state.bytes_downloaded + #chunk
+        end
+        return true
+    end
+
+    local ok, result = deps.api.downloadFile(entry.abs_item_id, file.ino, sink, extra_headers)
+    file_handle:close()
+
+    if ok then
+        deps.manifest.updateFileStatus(entry.abs_item_id, file.filename, "complete")
+    else
+        deps.manifest.updateFileStatus(entry.abs_item_id, file.filename, "partial")
+        return false, "download_failed"
+    end
+
+    return true, nil
+end
+
+------------------------------------------------------------------------
+-- Get free disk space for a path (uses df command)
+-- Returns nil if unable to determine
+-- @param path string  filesystem path
+-- @return number|nil  free bytes
+------------------------------------------------------------------------
+function downloader.get_free_space(path)
+    local handle = io.popen("df -k '" .. path .. "' 2>/dev/null | tail -1 | awk '{print $4}'")
+    if handle then
+        local result = handle:read("*n")
+        handle:close()
+        if result then
+            return result * 1024  -- convert KB to bytes
+        end
+    end
+    return nil
+end
+
+------------------------------------------------------------------------
+-- Format bytes as human-readable string
+-- @param b number  bytes
+-- @return string
+------------------------------------------------------------------------
+function downloader.format_bytes(b)
+    if b >= 1073741824 then
+        return string.format("%.1f GB", b / 1073741824)
+    elseif b >= 1048576 then
+        return string.format("%.1f MB", b / 1048576)
+    elseif b >= 1024 then
+        return string.format("%.1f KB", b / 1024)
+    else
+        return tostring(b) .. " B"
+    end
+end
+
+------------------------------------------------------------------------
+-- Start a chunked (coroutine-based) download of a single file.
+-- The sink yields to the caller every YIELD_INTERVAL chunks, allowing
+-- KOReader's UIManager event loop to process UI events (progress
+-- updates, cancel taps) between chunks.
+--
+-- Returns a handle table with:
+--   .pump()       — resume coroutine; returns true if still running
+--   .cancel()     — mark cancelled (next pump will finalize)
+--   .finalize()   — close file handle, update manifest; returns ok, reason
+--   .is_done()    — true when coroutine finished
+------------------------------------------------------------------------
+function downloader.start_chunked_download(entry, file, deps)
+    deps.fs.mkdir(entry.local_dir)
+
+    local open_mode = "wb"
+    local extra_headers = nil
+    local local_size = deps.fs.get_file_size(entry.local_dir .. "/" .. file.filename) or 0
+
+    if file.status == "partial" and local_size > 0 and local_size < file.size then
+        open_mode = "ab"
+        extra_headers = { ["Range"] = "bytes=" .. tostring(local_size) .. "-" }
+    end
+
+    local file_handle = deps.fs.open(entry.local_dir .. "/" .. file.filename, open_mode)
+    if not file_handle then
+        deps.manifest.updateFileStatus(entry.abs_item_id, file.filename, "partial")
+        return nil, "file_open_error"
+    end
+
+    local chunk_count = 0
+    local YIELD_INTERVAL = 64  -- yield every 64 chunks (~64 * 8KB = 512KB)
+    local cancelled = false
+    local done = false
+    local download_ok = false
+
+    -- Sink that writes chunks and yields periodically
+    local function yielding_sink(chunk)
+        if chunk then
+            file_handle:write(chunk)
+            deps.state.bytes_downloaded = deps.state.bytes_downloaded + #chunk
+            chunk_count = chunk_count + 1
+            if chunk_count % YIELD_INTERVAL == 0 then
+                coroutine.yield()  -- return to UIManager event loop
+            end
+        end
+        return true  -- ltn12 sinks must return true to continue
+    end
+
+    local co = coroutine.create(function()
+        local ok, result = deps.api.downloadFile(
+            entry.abs_item_id, file.ino, yielding_sink, extra_headers)
+        download_ok = ok
+        done = true
+        return ok, result
+    end)
+
+    local handle = {
+        _co = co,
+        _file_handle = file_handle,
+        _entry = entry,
+        _file = file,
+        _deps = deps,
+
+        --- Resume the download coroutine. Returns true if still running.
+        pump = function(self)
+            if done or cancelled then return false end
+            local ok, msg = coroutine.resume(self._co)
+            if not ok then
+                download_ok = false
+                done = true
+                return false
+            end
+            return not done
+        end,
+
+        --- Mark the download as cancelled.
+        cancel = function(self)
+            cancelled = true
+        end,
+
+        --- True when the download coroutine has finished.
+        is_done = function(self)
+            return done or cancelled
+        end,
+
+        --- Close the file handle and update manifest. Returns ok, reason.
+        finalize = function(self)
+            if self._file_handle then
+                self._file_handle:close()
+                self._file_handle = nil
+            end
+            if download_ok and not cancelled then
+                self._deps.manifest.updateFileStatus(
+                    self._entry.abs_item_id, self._file.filename, "complete")
+                return true, nil
+            else
+                self._deps.manifest.updateFileStatus(
+                    self._entry.abs_item_id, self._file.filename, "partial")
+                return false, cancelled and "cancelled" or "download_failed"
+            end
+        end,
+    }
+
+    return handle
 end
 
 return downloader

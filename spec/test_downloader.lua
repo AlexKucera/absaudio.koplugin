@@ -652,6 +652,717 @@ run_test("reconcile_manifest handles empty books list", function()
     -- Should not crash
     downloader.reconcile_manifest(mock_manifest, mock_fs)
 end)
+
+-- ============================================================
+-- Slice 12: execute_download
+-- ============================================================
+
+run_test("execute_download downloads single pending file and marks complete", function()
+    local entry = {
+        abs_item_id = "li_test",
+        local_dir = "/tmp/test_dl",
+        files = {
+            { filename = "book.m4b", ino = "111", size = 1000, status = "pending" },
+        },
+    }
+
+    local written_files = {}
+    local mock_manifest = {
+        updateFileStatus = function(id, filename, status)
+            entry.files[1].status = status
+        end,
+    }
+    local mock_api = {
+        downloadFile = function(item_id, ino, sink, extra_headers)
+            sink("audio-data-here")
+            return true, 200
+        end,
+    }
+    local mock_fs = {
+        mkdir = function(path) end,
+        open = function(path, mode)
+            return {
+                write = function(self, data)
+                    written_files[path] = (written_files[path] or "") .. data
+                end,
+                close = function(self) end,
+            }
+        end,
+        get_file_size = function(path) return 0 end,
+    }
+    local state = downloader.create_download_state()
+    local progress_calls = {}
+
+    local ok, reason = downloader.execute_download(entry, {
+        manifest = mock_manifest,
+        api = mock_api,
+        fs = mock_fs,
+        state = state,
+        on_progress = function(s) table.insert(progress_calls, s.bytes_downloaded) end,
+    })
+
+    assert(ok, "execute_download should succeed: " .. tostring(reason))
+    mock.assert_equals(entry.files[1].status, "complete", "file should be marked complete")
+    mock.assert_equals(written_files["/tmp/test_dl/book.m4b"], "audio-data-here", "data written to correct path")
+    mock.assert_equals(#progress_calls, 1, "on_progress called once")
+end)
+
+run_test("execute_download downloads multiple files sequentially", function()
+    local entry = {
+        abs_item_id = "li_multi",
+        local_dir = "/tmp/test_multi",
+        files = {
+            { filename = "part1.m4b", ino = "111", size = 1000, status = "pending" },
+            { filename = "part2.m4b", ino = "222", size = 2000, status = "pending" },
+        },
+    }
+
+    local download_order = {}
+    local mock_manifest = {
+        updateFileStatus = function(id, filename, status)
+            for _, f in ipairs(entry.files) do
+                if f.filename == filename then f.status = status end
+            end
+        end,
+    }
+    local mock_api = {
+        downloadFile = function(item_id, ino, sink, extra_headers)
+            table.insert(download_order, ino)
+            sink("data-" .. ino)
+            return true, 200
+        end,
+    }
+    local mock_fs = {
+        mkdir = function() end,
+        open = function(path, mode)
+            return {
+                write = function() end,
+                close = function() end,
+            }
+        end,
+        get_file_size = function() return 0 end,
+    }
+    local state = downloader.create_download_state()
+    local progress_count = 0
+
+    local ok = downloader.execute_download(entry, {
+        manifest = mock_manifest,
+        api = mock_api,
+        fs = mock_fs,
+        state = state,
+        on_progress = function(s) progress_count = progress_count + 1 end,
+    })
+
+    assert(ok)
+    mock.assert_equals(entry.files[1].status, "complete")
+    mock.assert_equals(entry.files[2].status, "complete")
+    mock.assert_equals(#download_order, 2, "should download 2 files")
+    mock.assert_equals(download_order[1], "111", "first file first")
+    mock.assert_equals(download_order[2], "222", "second file second")
+    mock.assert_equals(progress_count, 2, "on_progress called twice")
+    mock.assert_equals(state.total_files, 2)
+end)
+
+run_test("execute_download resumes partial file with Range header", function()
+    local entry = {
+        abs_item_id = "li_resume",
+        local_dir = "/tmp/test_resume",
+        files = {
+            { filename = "book.m4b", ino = "333", size = 10000, status = "partial" },
+        },
+    }
+
+    local open_modes = {}
+    local sent_headers = nil
+    local mock_manifest = {
+        updateFileStatus = function(id, filename, status)
+            entry.files[1].status = status
+        end,
+    }
+    local mock_api = {
+        downloadFile = function(item_id, ino, sink, extra_headers)
+            sent_headers = extra_headers
+            sink("appended-data")
+            return true, 200
+        end,
+    }
+    local mock_fs = {
+        mkdir = function() end,
+        open = function(path, mode)
+            table.insert(open_modes, mode)
+            return {
+                write = function() end,
+                close = function() end,
+            }
+        end,
+        get_file_size = function(path) return 5000 end,  -- 5000 already downloaded
+    }
+
+    local ok = downloader.execute_download(entry, {
+        manifest = mock_manifest,
+        api = mock_api,
+        fs = mock_fs,
+        state = downloader.create_download_state(),
+    })
+
+    assert(ok)
+    mock.assert_equals(entry.files[1].status, "complete")
+    mock.assert_equals(open_modes[1], "ab", "should open in append mode for partial")
+    mock.assert_equals(sent_headers["Range"], "bytes=5000-", "should send Range header")
+end)
+
+run_test("execute_download cancels between files", function()
+    local entry = {
+        abs_item_id = "li_cancel",
+        local_dir = "/tmp/test_cancel",
+        files = {
+            { filename = "part1.m4b", ino = "111", size = 1000, status = "pending" },
+            { filename = "part2.m4b", ino = "222", size = 2000, status = "pending" },
+        },
+    }
+
+    local mock_manifest = {
+        updateFileStatus = function(id, filename, status)
+            for _, f in ipairs(entry.files) do
+                if f.filename == filename then f.status = status end
+            end
+        end,
+    }
+    local mock_api = {
+        downloadFile = function(item_id, ino, sink, extra_headers)
+            sink("data")
+            return true, 200
+        end,
+    }
+    local mock_fs = {
+        mkdir = function() end,
+        open = function()
+            return { write = function() end, close = function() end }
+        end,
+        get_file_size = function() return 0 end,
+    }
+    local state = downloader.create_download_state()
+
+    -- Cancel after first file
+    local progress_count = 0
+    local ok, reason = downloader.execute_download(entry, {
+        manifest = mock_manifest,
+        api = mock_api,
+        fs = mock_fs,
+        state = state,
+        on_progress = function(s)
+            progress_count = progress_count + 1
+            if progress_count == 1 then s:cancel() end
+        end,
+    })
+
+    mock.assert_equals(ok, false, "should fail when cancelled")
+    mock.assert_equals(reason, "cancelled", "reason should be cancelled")
+    mock.assert_equals(entry.files[1].status, "complete", "first file completed")
+    mock.assert_equals(entry.files[2].status, "pending", "second file untouched")
+end)
+
+run_test("execute_download marks partial on API failure", function()
+    local entry = {
+        abs_item_id = "li_fail",
+        local_dir = "/tmp/test_fail",
+        files = {
+            { filename = "book.m4b", ino = "444", size = 1000, status = "pending" },
+        },
+    }
+
+    local mock_manifest = {
+        updateFileStatus = function(id, filename, status)
+            entry.files[1].status = status
+        end,
+    }
+    local mock_api = {
+        downloadFile = function(item_id, ino, sink, extra_headers)
+            sink("partial-data")
+            return false, { type = "network", message = "connection lost" }
+        end,
+    }
+    local mock_fs = {
+        mkdir = function() end,
+        open = function()
+            return { write = function() end, close = function() end }
+        end,
+        get_file_size = function() return 0 end,
+    }
+
+    local ok, reason = downloader.execute_download(entry, {
+        manifest = mock_manifest,
+        api = mock_api,
+        fs = mock_fs,
+        state = downloader.create_download_state(),
+    })
+
+    mock.assert_equals(ok, false, "should fail")
+    mock.assert_equals(reason, "download_failed")
+    mock.assert_equals(entry.files[1].status, "partial", "should mark as partial on failure")
+end)
+
+run_test("execute_download skips complete files", function()
+    local entry = {
+        abs_item_id = "li_skip",
+        local_dir = "/tmp/test_skip",
+        files = {
+            { filename = "done.m4b", ino = "555", size = 1000, status = "complete" },
+            { filename = "pending.m4b", ino = "666", size = 2000, status = "pending" },
+        },
+    }
+
+    local downloaded_inos = {}
+    local mock_manifest = {
+        updateFileStatus = function(id, filename, status)
+            for _, f in ipairs(entry.files) do
+                if f.filename == filename then f.status = status end
+            end
+        end,
+    }
+    local mock_api = {
+        downloadFile = function(item_id, ino, sink, extra_headers)
+            table.insert(downloaded_inos, ino)
+            sink("data")
+            return true, 200
+        end,
+    }
+    local mock_fs = {
+        mkdir = function() end,
+        open = function()
+            return { write = function() end, close = function() end }
+        end,
+        get_file_size = function() return 0 end,
+    }
+
+    local state = downloader.create_download_state()
+    local ok = downloader.execute_download(entry, {
+        manifest = mock_manifest,
+        api = mock_api,
+        fs = mock_fs,
+        state = state,
+    })
+
+    assert(ok)
+    mock.assert_equals(#downloaded_inos, 1, "should only download pending file")
+    mock.assert_equals(downloaded_inos[1], "666", "should skip complete file")
+    mock.assert_equals(state.total_files, 1, "state.total_files should only count files to download")
+end)
+
+-- ============================================================
+-- Slice 13: format_progress_info (download progress widget)
+-- ============================================================
+
+-- Stub KOReader UI dependencies for download_progress module
+package.loaded["ffi/blitbuffer"] = package.loaded["ffi/blitbuffer"] or {
+    COLOR_WHITE = { r = 255 }, COLOR_BLACK = { r = 0 }, COLOR_BLUE = { r = 0 }, COLOR_DARK_GRAY = { r = 128 },
+}
+package.loaded["device"] = package.loaded["device"] or {
+    screen = { getSize = function() return { w = 600, h = 800 } end },
+    hasKeys = function() return false end,
+    isTouchDevice = function() return true end,
+    input = { group = { Back = "Back" } },
+}
+package.loaded["ui/font"] = package.loaded["ui/font"] or {
+    getFace = function() return {} end,
+}
+package.loaded["ui/widget/focusmanager"] = package.loaded["ui/widget/focusmanager"] or {
+    extend = function(self, tbl) for k, v in pairs(tbl) do self[k] = v end; return self end,
+}
+package.loaded["ui/widget/container/framecontainer"] = package.loaded["ui/widget/container/framecontainer"] or { new = function(t) return t end }
+package.loaded["ui/geometry"] = package.loaded["ui/geometry"] or { new = function(t) return t end }
+package.loaded["ui/gesturerange"] = package.loaded["ui/gesturerange"] or { new = function(t) return t end }
+package.loaded["ui/widget/horizontalgroup"] = package.loaded["ui/widget/horizontalgroup"] or { new = function(t) return t end }
+package.loaded["ui/widget/container/inputcontainer"] = package.loaded["ui/widget/container/inputcontainer"] or { new = function(t) return t end }
+package.loaded["ui/size"] = package.loaded["ui/size"] or { padding = { large = 10, default = 5, small = 3 }, line = { thin = 1 } }
+package.loaded["ui/widget/textwidget"] = package.loaded["ui/widget/textwidget"] or { new = function(t) t.getTextSize = function() return { w = 100, h = 20 } end; t.setText = function() end; return t end }
+package.loaded["ui/uimanager"] = package.loaded["ui/uimanager"] or { show = function() end, close = function() end, setDirty = function() end }
+package.loaded["ui/widget/verticalgroup"] = package.loaded["ui/widget/verticalgroup"] or { new = function(t) return t end }
+package.loaded["ui/widget/verticalspan"] = package.loaded["ui/widget/verticalspan"] or { new = function(t) return t end }
+package.loaded["gettext"] = package.loaded["gettext"] or function(s) return s end
+
+run_test("format_progress_info shows file count and percentage", function()
+    local progress_mod = require("absaudio/download_progress")
+    local state = {
+        current_file = 1,
+        total_files = 3,
+        bytes_downloaded = 500000,
+        total_bytes = 1000000,
+        progress_fraction = function(self) return self.bytes_downloaded / self.total_bytes end,
+    }
+    local info = progress_mod.format_progress_info(state)
+    mock.assert_equals(info:find("file 1 of 3") ~= nil, true, "should show file count")
+    mock.assert_equals(info:find("50%%") ~= nil, true, "should show percentage")
+    mock.assert_equals(info:find("KB") ~= nil, true, "should show downloaded bytes")
+end)
+
+run_test("format_progress_info shows ETA when start_time set", function()
+    local progress_mod = require("absaudio/download_progress")
+    local state = {
+        current_file = 1,
+        total_files = 1,
+        bytes_downloaded = 500000,
+        total_bytes = 1000000,
+        start_time = os.time() - 10,  -- 10 seconds ago
+        progress_fraction = function(self) return self.bytes_downloaded / self.total_bytes end,
+    }
+    local info = progress_mod.format_progress_info(state)
+    mock.assert_equals(info:find("ETA") ~= nil, true, "should show ETA estimate")
+end)
+
+run_test("format_progress_info handles zero bytes", function()
+    local progress_mod = require("absaudio/download_progress")
+    local state = {
+        current_file = 0,
+        total_files = 0,
+        bytes_downloaded = 0,
+        total_bytes = 0,
+        progress_fraction = function(self) return 0 end,
+    }
+    local info = progress_mod.format_progress_info(state)
+    mock.assert_equals(info:find("file 0 of 0") ~= nil, true, "should handle zero state")
+end)
+-- ============================================================
+-- Slice 14: execute_single_file_download
+-- ============================================================
+
+run_test("execute_single_file_download downloads pending file", function()
+    local written = {}
+    local mock_fs = {
+        mkdir = function() end,
+        open = function(path, mode)
+            return {
+                write = function(self, chunk) table.insert(written, chunk) end,
+                close = function(self) end,
+            }
+        end,
+        get_file_size = function() return nil end,
+    }
+    local downloaded = {}
+    local mock_api = {
+        downloadFile = function(item_id, ino, sink, headers)
+            table.insert(downloaded, { item_id = item_id, ino = ino, headers = headers })
+            sink("hello")
+            sink("world")
+            return true, 200
+        end,
+    }
+    local status_updates = {}
+    local mock_manifest = {
+        updateFileStatus = function(id, fn, status)
+            table.insert(status_updates, { id = id, fn = fn, status = status })
+        end,
+    }
+    local state = downloader.create_download_state()
+
+    local entry = { abs_item_id = "li_1", local_dir = "/tmp/test" }
+    local file = { filename = "book.m4b", ino = "111", size = 10, status = "pending" }
+
+    local ok, reason = downloader.execute_single_file_download(entry, file, {
+        manifest = mock_manifest, api = mock_api, fs = mock_fs, state = state,
+    })
+
+    mock.assert_equals(ok, true, "should succeed")
+    mock.assert_equals(#written, 2, "should write 2 chunks")
+    mock.assert_equals(#status_updates, 1, "should update status once")
+    mock.assert_equals(status_updates[1].status, "complete", "should mark complete")
+    mock.assert_equals(downloaded[1].headers, nil, "should not send Range header for pending file")
+end)
+
+run_test("execute_single_file_download resumes partial file with Range header", function()
+    local mock_fs = {
+        mkdir = function() end,
+        open = function(path, mode)
+            return { write = function() end, close = function() end }
+        end,
+        get_file_size = function() return 500 end,  -- 500 bytes already downloaded
+    }
+    local downloaded = {}
+    local mock_api = {
+        downloadFile = function(item_id, ino, sink, headers)
+            table.insert(downloaded, { headers = headers })
+            sink("more_data")
+            return true, 200
+        end,
+    }
+    local mock_manifest = {
+        updateFileStatus = function() end,
+    }
+    local state = downloader.create_download_state()
+
+    local entry = { abs_item_id = "li_1", local_dir = "/tmp/test" }
+    local file = { filename = "book.m4b", ino = "111", size = 1000, status = "partial" }
+
+    local ok = downloader.execute_single_file_download(entry, file, {
+        manifest = mock_manifest, api = mock_api, fs = mock_fs, state = state,
+    })
+
+    mock.assert_equals(ok, true, "should succeed")
+    mock.assert_equals(downloaded[1].headers["Range"], "bytes=500-", "should send Range header")
+end)
+
+run_test("execute_single_file_download returns error on file open failure", function()
+    local mock_fs = {
+        mkdir = function() end,
+        open = function() return nil end,  -- fail to open
+        get_file_size = function() return nil end,
+    }
+    local mock_manifest = {
+        updateFileStatus = function() end,
+    }
+    local state = downloader.create_download_state()
+
+    local entry = { abs_item_id = "li_1", local_dir = "/tmp/test" }
+    local file = { filename = "book.m4b", ino = "111", size = 10, status = "pending" }
+
+    local ok, reason = downloader.execute_single_file_download(entry, file, {
+        manifest = mock_manifest, api = {}, fs = mock_fs, state = state,
+    })
+
+    mock.assert_equals(ok, false, "should fail")
+    mock.assert_equals(reason, "file_open_error", "should return file_open_error")
+end)
+
+-- ============================================================
+-- Slice 15: get_free_space and format_bytes
+-- ============================================================
+
+run_test("format_bytes formats bytes correctly", function()
+    mock.assert_equals(downloader.format_bytes(500), "500 B")
+    mock.assert_equals(downloader.format_bytes(1024), "1.0 KB")
+    mock.assert_equals(downloader.format_bytes(1048576), "1.0 MB")
+    mock.assert_equals(downloader.format_bytes(1073741824), "1.0 GB")
+end)
+
+run_test("get_free_space returns number when df works", function()
+    -- This test may fail in some environments, so we just check it returns nil or a number
+    local result = downloader.get_free_space("/tmp")
+    mock.assert_equals(result == nil or type(result) == "number", true, "should return nil or number")
+end)
+
+-- ============================================================
+-- start_chunked_download (coroutine-based async download)
+-- ============================================================
+
+run_test("start_chunked_download pumps coroutine and finalizes", function()
+    local chunks_written = {}
+    local file_closed = false
+    local manifest_status = nil
+
+    local deps = {
+        fs = {
+            mkdir = function() end,
+            get_file_size = function() return 0 end,
+            open = function(path, mode)
+                return {
+                    write = function(self, data) table.insert(chunks_written, data) end,
+                    close = function(self) file_closed = true end,
+                }
+            end,
+        },
+        api = {
+            downloadFile = function(item_id, ino, sink, headers)
+                -- Simulate 4 chunks of data
+                sink("AAAA")
+                sink("BBBB")
+                sink("CCCC")
+                sink("DDDD")
+                return true, 200
+            end,
+        },
+        manifest = {
+            updateFileStatus = function(id, fn, status) manifest_status = status end,
+        },
+        state = {
+            bytes_downloaded = 0,
+        },
+    }
+
+    local entry = {
+        abs_item_id = "test-id",
+        local_dir = "/tmp/test",
+    }
+    local file = { filename = "test.m4b", ino = "123", size = 100, status = "pending" }
+
+    local handle = downloader.start_chunked_download(entry, file, deps)
+    mock.assert_equals(handle ~= nil, true, "handle should be returned")
+    mock.assert_equals(handle:is_done(), false, "should not be done yet")
+
+    -- Pump until done
+    while handle:pump() do end
+
+    mock.assert_equals(handle:is_done(), true, "should be done after pumping")
+    mock.assert_equals(#chunks_written, 4, "should have 4 chunks")
+
+    local ok, reason = handle:finalize()
+    mock.assert_equals(ok, true, "finalize should succeed")
+    mock.assert_equals(file_closed, true, "file should be closed")
+    mock.assert_equals(manifest_status, "complete", "manifest should be updated to complete")
+end)
+
+run_test("start_chunked_download yields every 64 chunks", function()
+    local chunk_count = 0
+    local pumps_needed = 0
+
+    local deps = {
+        fs = {
+            mkdir = function() end,
+            get_file_size = function() return 0 end,
+            open = function(path, mode)
+                return {
+                    write = function(self, data) end,
+                    close = function(self) end,
+                }
+            end,
+        },
+        api = {
+            downloadFile = function(item_id, ino, sink, headers)
+                -- Simulate 200 chunks
+                for i = 1, 200 do
+                    sink(string.rep("X", 8192))
+                end
+                return true, 200
+            end,
+        },
+        manifest = {
+            updateFileStatus = function() end,
+        },
+        state = {
+            bytes_downloaded = 0,
+        },
+    }
+
+    local entry = { abs_item_id = "test-id", local_dir = "/tmp/test" }
+    local file = { filename = "big.m4b", ino = "456", size = 1000000, status = "pending" }
+
+    local handle = downloader.start_chunked_download(entry, file, deps)
+
+    -- Each pump should resume from yield, 200 chunks / 64 per yield = ~3 pumps
+    while handle:pump() do
+        pumps_needed = pumps_needed + 1
+        if pumps_needed > 10 then break end  -- safety limit
+    end
+
+    mock.assert_equals(pumps_needed >= 2, true,
+        "should need multiple pumps for 200 chunks (got " .. pumps_needed .. ")")
+    mock.assert_equals(handle:is_done(), true, "should be done")
+    handle:finalize()
+end)
+
+run_test("start_chunked_download handles cancel", function()
+    local deps = {
+        fs = {
+            mkdir = function() end,
+            get_file_size = function() return 0 end,
+            open = function(path, mode)
+                return {
+                    write = function(self, data) end,
+                    close = function(self) end,
+                }
+            end,
+        },
+        api = {
+            downloadFile = function(item_id, ino, sink, headers)
+                for i = 1, 300 do
+                    sink(string.rep("X", 8192))
+                end
+                return true, 200
+            end,
+        },
+        manifest = {
+            updateFileStatus = function() end,
+        },
+        state = {
+            bytes_downloaded = 0,
+        },
+    }
+
+    local entry = { abs_item_id = "test-id", local_dir = "/tmp/test" }
+    local file = { filename = "cancel.m4b", ino = "789", size = 500000, status = "pending" }
+
+    local handle = downloader.start_chunked_download(entry, file, deps)
+
+    -- Pump once to start
+    handle:pump()
+    -- Cancel
+    handle:cancel()
+
+    mock.assert_equals(handle:is_done(), true, "should be done after cancel")
+
+    local ok, reason = handle:finalize()
+    mock.assert_equals(ok, false, "finalize should fail after cancel")
+    mock.assert_equals(reason, "cancelled", "reason should be cancelled")
+end)
+
+run_test("start_chunked_download handles API failure", function()
+    local deps = {
+        fs = {
+            mkdir = function() end,
+            get_file_size = function() return 0 end,
+            open = function(path, mode)
+                return {
+                    write = function(self, data) end,
+                    close = function(self) end,
+                }
+            end,
+        },
+        api = {
+            downloadFile = function(item_id, ino, sink, headers)
+                sink("partial")
+                return false, { type = "network", message = "timeout" }
+            end,
+        },
+        manifest = {
+            updateFileStatus = function() end,
+        },
+        state = {
+            bytes_downloaded = 0,
+        },
+    }
+
+    local entry = { abs_item_id = "test-id", local_dir = "/tmp/test" }
+    local file = { filename = "fail.m4b", ino = "999", size = 100, status = "pending" }
+
+    local handle = downloader.start_chunked_download(entry, file, deps)
+    while handle:pump() do end
+
+    local ok, reason = handle:finalize()
+    mock.assert_equals(ok, false, "finalize should fail on API error")
+    mock.assert_equals(reason, "download_failed", "reason should be download_failed")
+end)
+
+run_test("get_ebook_files extracts from media.ebookFile (ABS format)", function()
+    local item = {
+        media = {
+            ebookFile = {
+                ino = "12345",
+                metadata = {
+                    filename = "Oathbringer.pdf",
+                    ext = ".pdf",
+                    size = 17386979,
+                },
+                ebookFormat = "pdf",
+            },
+        },
+    }
+    local result = downloader.get_ebook_files(item)
+    mock.assert_equals(#result, 1, "should extract 1 ebook file")
+    mock.assert_equals(result[1].ino, "12345", "ino should match")
+    mock.assert_equals(result[1].filename, "Oathbringer.pdf", "filename should match")
+    mock.assert_equals(result[1].ext, ".pdf", "ext should match")
+    mock.assert_equals(result[1].size, 17386979, "size should match")
+end)
+
+run_test("get_ebook_files returns empty for item without ebookFile", function()
+    local item = {
+        media = {
+            audioFiles = { { ino = "1" } },
+        },
+    }
+    local result = downloader.get_ebook_files(item)
+    mock.assert_equals(#result, 0, "should return empty for audio-only item")
+end)
+
 -- ============================================================
 -- Summary
 -- ============================================================

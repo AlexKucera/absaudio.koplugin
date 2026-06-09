@@ -81,6 +81,8 @@ package.loaded["ui/widget/textwidget"] = make_widget_stub()
 package.loaded["ui/widget/imagewidget"] = make_widget_stub()
 package.loaded["ui/widget/iconwidget"] = make_widget_stub()
 package.loaded["ui/widget/infomessage"] = make_widget_stub()
+package.loaded["ui/widget/confirmbox"] = make_widget_stub()
+package.loaded["absaudio/download_progress"] = { show = function() end, close = function() end, update = function() end }
 local mid_stub = {
     new = function(self, opts)
         local obj = opts or {}
@@ -197,6 +199,32 @@ package.loaded["manifest"] = {
     getRecentBook = function() return nil end,
     getAllBooks = function() return {} end,
     getBook = function() return nil end,
+}
+
+-- Mock lfs for downloader.reconcile_manifest
+_G.lfs = {
+    attributes = function(path)
+        return nil  -- file doesn't exist
+    end,
+}
+
+local reconcile_called = false
+package.loaded["absaudio/downloader"] = {
+    reconcile_manifest = function(manifest, fs)
+        reconcile_called = true
+    end,
+    sanitize_filename = function() return "untitled" end,
+    filter_audio_files = function() return {} end,
+    select_files_to_download = function() return {} end,
+    calculate_download_size = function() return 0 end,
+    check_free_space = function() return true end,
+    create_download_state = function()
+        return { cancelled = false, current_file = 0, total_files = 0, bytes_downloaded = 0, total_bytes = 0,
+            cancel = function(self) self.cancelled = true end,
+            is_cancelled = function(self) return self.cancelled end,
+            progress_fraction = function(self) return 0 end,
+        }
+    end,
 }
 
 package.loaded["absaudio/library_store"] = {
@@ -453,6 +481,17 @@ run_test("ABSAudioSettings event routes to onShowSettings", function()
     mock.assert_equals(settings_called, true, "ABSAudioSettings should call onShowSettings")
 
     plugin.onShowSettings = orig
+end)
+
+run_test("init calls reconcile_manifest on startup", function()
+    reconcile_called = false
+    local plugin = ABSAudio:new{
+        ui = {
+            menu = { registerToMainMenu = function() end },
+        },
+    }
+    plugin:init()
+    mock.assert_equals(reconcile_called, true, "init should call downloader.reconcile_manifest")
 end)
 
 -- ============================================================
