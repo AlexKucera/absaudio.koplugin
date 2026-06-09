@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file. The format 
 ## [Unreleased]
 
 ### feat
+### fix
+
+- **dashboard:** log warning when `prepare()` fails instead of silently discarding the error
+- **library-browser:** remove stray `print()` that appeared in production logs on every module load
 
 - **library-browser:** expose search feature with magnifying glass icon button, InputDialog, and `browser.search()` API; show active query text next to icon
 - **dashboard:** extract `prepare()` function separating data fetching from widget rendering; add 4 tests for pure-data paths

@@ -553,6 +553,9 @@ function dashboard.show(data)
 
     -- Prepare data (pure data, no widgets)
     local prepared, err = dashboard.prepare()
+    if err then
+        abs_logger.warn("dashboard.prepare() failed: " .. tostring(err.message))
+    end
 
     -- Pass prepared data + callbacks through constructor
     local view = DashboardView:new{

@@ -1,7 +1,6 @@
 -- Library browser widget for absaudio.koplugin  [v2-synchronous]
 -- Fullscreen scrollable list of audiobooks from an ABS library.
 -- Uses library_store for data and cover_cache for cover art.
-print("[ABS-BROWSER] module loaded (v2-synchronous)")
 --
 -- Public API:
 --   browser.show(data)
