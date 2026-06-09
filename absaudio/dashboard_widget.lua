@@ -40,6 +40,8 @@ if not has_library_browser then
     print("[ABS-DEBUG] library_browser load FAILED: " .. tostring(library_browser))
 end
 
+local has_library_store, library_store = pcall(require, "absaudio/library_store")
+
 local dashboard = {}
 
 -- Callbacks passed from plugin (set via dashboard.show())
@@ -334,10 +336,26 @@ function DashboardView:_addDownloadedBooksSection()
 end
 
 function DashboardView:_addBrowseLibraryButton()
+    -- Check if we should grey out the button
+    local is_greyed = false
+    local grey_reason = ""
+    if not has_api or not api.is_configured() then
+        is_greyed = true
+        grey_reason = _("Configure server settings first")
+    elseif has_library_store and library_store.wasLastFetchSuccessful() == false then
+        is_greyed = true
+        grey_reason = _("Connect to WiFi to browse")
+    end
+
+    local btn_text = _("Browse Library")
+    if is_greyed then
+        btn_text = _("Browse Library") .. "\n" .. grey_reason
+    end
+
     local btn = TextWidget:new{
-        text = _("Browse Library"),
+        text = btn_text,
         face = Font:getFace("cfont", 16),
-        fgcolor = Blitbuffer.COLOR_BLUE,
+        fgcolor = is_greyed and Blitbuffer.COLOR_DARK_GRAY or Blitbuffer.COLOR_BLUE,
     }
 
     local tap_container = InputContainer:new{
@@ -346,17 +364,21 @@ function DashboardView:_addBrowseLibraryButton()
             h = btn:getSize().h + Size.padding.default,
         },
     }
-    tap_container.ges_events.TapBrowse = {
-        GestureRange:new{
-            ges = "tap",
-            range = tap_container.dimen,
-        },
-    }
-    tap_container.dashboard_ref = self.dashboard_ref
-    function tap_container:onTapBrowse()
-        self.dashboard_ref:_onBrowseLibrary()
-        return true
+
+    if not is_greyed then
+        tap_container.ges_events.TapBrowse = {
+            GestureRange:new{
+                ges = "tap",
+                range = tap_container.dimen,
+            },
+        }
+        tap_container.dashboard_ref = self.dashboard_ref
+        function tap_container:onTapBrowse()
+            self.dashboard_ref:_onBrowseLibrary()
+            return true
+        end
     end
+
     tap_container[1] = btn
     table.insert(self.content_group, tap_container)
     table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.default })

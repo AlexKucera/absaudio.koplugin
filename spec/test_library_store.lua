@@ -407,6 +407,62 @@ run_test("getItems uses stored sort when no sort in opts", function()
 end)
 
 -- ============================================================
+-- Test: wasLastFetchSuccessful returns nil before any fetch
+-- ============================================================
+run_test("wasLastFetchSuccessful returns nil before any fetch", function()
+    mock.assert_equals(library_store.wasLastFetchSuccessful(), nil, "should be nil before any fetch")
+end)
+
+-- ============================================================
+-- Test: wasLastFetchSuccessful returns true after successful fetch
+-- ============================================================
+run_test("wasLastFetchSuccessful returns true after successful fetch", function()
+    mock_api_data = { results = SAMPLE_ITEMS, total = #SAMPLE_ITEMS }
+    library_store.fetchAll("lib_001")
+    mock.assert_equals(library_store.wasLastFetchSuccessful(), true, "should be true after successful fetch")
+end)
+
+-- ============================================================
+-- Test: wasLastFetchSuccessful returns false after failed fetch
+-- ============================================================
+run_test("wasLastFetchSuccessful returns false after failed fetch", function()
+    mock_api_error = { type = "network", message = "connection failed" }
+    library_store.fetchAll("lib_001")
+    mock.assert_equals(library_store.wasLastFetchSuccessful(), false, "should be false after failed fetch")
+end)
+
+-- ============================================================
+-- Test: wasLastFetchSuccessful resets to nil on init
+-- ============================================================
+run_test("wasLastFetchSuccessful resets to nil on init", function()
+    mock_api_data = { results = SAMPLE_ITEMS, total = #SAMPLE_ITEMS }
+    library_store.fetchAll("lib_001")
+    mock.assert_equals(library_store.wasLastFetchSuccessful(), true, "should be true after fetch")
+    library_store.init()
+    mock.assert_equals(library_store.wasLastFetchSuccessful(), nil, "should be nil after init")
+end)
+
+-- ============================================================
+-- Test: wasLastFetchSuccessful tracks across multiple fetches
+-- ============================================================
+run_test("wasLastFetchSuccessful tracks across multiple fetches", function()
+    -- First: success
+    mock_api_data = { results = SAMPLE_ITEMS, total = #SAMPLE_ITEMS }
+    library_store.fetchAll("lib_001")
+    mock.assert_equals(library_store.wasLastFetchSuccessful(), true, "first fetch: should be true")
+
+    -- Second: failure
+    mock_api_error = { type = "network", message = "connection failed" }
+    library_store.fetchAll("lib_001")
+    mock.assert_equals(library_store.wasLastFetchSuccessful(), false, "second fetch: should be false")
+
+    -- Third: success again
+    mock_api_error = nil
+    library_store.fetchAll("lib_001")
+    mock.assert_equals(library_store.wasLastFetchSuccessful(), true, "third fetch: should be true")
+end)
+
+-- ============================================================
 -- Summary
 -- ============================================================
 print(string.format("\n%d passed, %d failed", passed, failed))

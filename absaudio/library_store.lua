@@ -51,11 +51,13 @@ local DEFAULT_SORT = "title_asc"
 -- Internal state
 local all_items = {}
 local current_sort = DEFAULT_SORT
+local last_fetch_ok = nil  -- nil=never tried, true=success, false=failure
 
 --- Reset store state (clear cached items and sort)
 function library_store.init()
     all_items = {}
     current_sort = DEFAULT_SORT
+    last_fetch_ok = nil
     abs_logger.verbose("Library store initialized (state reset)")
 end
 
@@ -74,10 +76,12 @@ function library_store.fetchAll(library_id)
     local ok, data = api.getLibraryItems(library_id, { limit = 0 })
     if not ok then
         abs_logger.warn("Failed to fetch library items: " .. tostring(data and data.message or "unknown"))
+        last_fetch_ok = false
         return false, data
     end
 
     all_items = data.results or {}
+    last_fetch_ok = true
     abs_logger.info("Cached " .. #all_items .. " items from library " .. library_id)
     return true
 end
@@ -86,6 +90,12 @@ end
 -- @return boolean
 function library_store.isLoaded()
     return #all_items > 0
+end
+
+--- Check if the last fetchAll call was successful
+--- @return boolean|nil  nil=never tried, true=success, false=failure
+function library_store.wasLastFetchSuccessful()
+    return last_fetch_ok
 end
 
 --- Get the ordered list of sort mode keys

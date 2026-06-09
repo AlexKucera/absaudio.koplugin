@@ -7,6 +7,8 @@ All notable changes to this project will be documented in this file. The format 
 ### feat
 
 - **library-browser:** expose search feature with magnifying glass icon button, InputDialog, and `browser.search()` API; show active query text next to icon
+- **dashboard:** grey out Browse Library button when offline (last fetch failed) or API not configured; show reason text beneath button; add `wasLastFetchSuccessful()` tri-state to library_store
+- **book-detail:** add offline fallback path — manifest data for downloaded books, WiFi message for undownloaded; add 9 unit tests covering merge, manifest fallback, and error paths
 
 ### fix
 
