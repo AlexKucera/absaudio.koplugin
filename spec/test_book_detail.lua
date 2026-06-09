@@ -101,6 +101,7 @@ package.loaded["ui/uimanager"] = {
     show = function() end,
     close = function() end,
     scheduleIn = function() end,
+    setDirty = function() end,
 }
 
 package.loaded["gettext"] = function(s) return s end

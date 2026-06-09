@@ -609,18 +609,23 @@ function detail.show(data)
             UIManager:close(loading)
             local prepared, err = detail.prepare(item)
             if prepared then
-                detail._renderView(prepared, on_download)
+                local view = detail._renderView(prepared, on_download)
+                if has_navigator then
+                    nav._setCurrent(view)
+                end
             else
                 error_handler.show(err.type or "network", err.message or _("Unable to load book details."))
             end
         end)
+        return nil  -- widget not available yet; _setCurrent updates nav async
     else
         -- Synchronous path
         local prepared, err = detail.prepare(item)
         if prepared then
-            detail._renderView(prepared, on_download)
+            return detail._renderView(prepared, on_download)
         else
             error_handler.show(err.type or "network", err.message or _("Unable to load book details."))
+            return nil
         end
     end
 end
@@ -634,6 +639,7 @@ function detail._renderView(item, on_download)
         on_download = on_download,
     }
     UIManager:show(view)
+    UIManager:setDirty(view, "full")
     return view
 end
 
