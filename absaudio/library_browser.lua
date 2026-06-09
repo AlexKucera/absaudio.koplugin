@@ -19,6 +19,7 @@ local GestureRange = require("ui/gesturerange")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local HorizontalSpan = require("ui/widget/horizontalspan")
 local ImageWidget = require("ui/widget/imagewidget")
+local IconWidget = require("ui/widget/iconwidget")
 local InfoMessage = require("ui/widget/infomessage")
 local InputDialog = require("ui/widget/inputdialog")
 local InputContainer = require("ui/widget/container/inputcontainer")
@@ -200,16 +201,28 @@ function LibraryBrowserView:_addHeader()
     end
     sort_container[1] = sort_text
 
-    -- Search button
-    local search_text = TextWidget:new{
-        text = "🔍",
-        face = Font:getFace("cfont", 16),
-        fgcolor = Blitbuffer.COLOR_DARK_GRAY,
+    -- Search button (icon + optional query text)
+    local search_icon = IconWidget:new{
+        icon = "appbar.search",
+        width = Size.padding.default * 3,
+        height = Size.padding.default * 3,
+        alpha = true,
     }
+    local search_elements = { search_icon }
+    if _search_query and _search_query ~= "" then
+        local search_label = TextWidget:new{
+            text = _search_query,
+            face = Font:getFace("cfont", 12),
+            fgcolor = Blitbuffer.COLOR_BLUE,
+        }
+        table.insert(search_elements, HorizontalSpan:new{ width = Size.padding.small })
+        table.insert(search_elements, search_label)
+    end
+    local search_inner = HorizontalGroup:new(search_elements)
     local search_container = InputContainer:new{
         dimen = Geom:new{
-            w = search_text:getSize().w + Size.padding.default,
-            h = search_text:getSize().h + Size.padding.default,
+            w = search_icon:getSize().w + Size.padding.default * 2 + (_search_query and _search_query ~= "" and 60 or 0),
+            h = search_icon:getSize().h + Size.padding.default * 2,
         },
     }
     search_container.ges_events.TapSearch = {
@@ -223,7 +236,7 @@ function LibraryBrowserView:_addHeader()
         self.browser_ref:onSearch()
         return true
     end
-    search_container[1] = search_text
+    search_container[1] = search_inner
 
     -- Arrange in horizontal group
     local header = HorizontalGroup:new{
@@ -291,6 +304,7 @@ end
 -- Book list — renders current page of items
 ------------------------------------------------------------------------
 function LibraryBrowserView:_addBookList()
+    abs_logger.verbose("_addBookList: search='" .. tostring(_search_query) .. "' page=" .. tostring(_current_page))
     local result = library_store.getItems({
         page = _current_page,
         per_page = self:_getPerPage(),
@@ -613,7 +627,8 @@ function LibraryBrowserView:onCycleSort()
 end
 
 function LibraryBrowserView:onSearch()
-    local input_dialog = InputDialog:new{
+    local input_dialog
+    input_dialog = InputDialog:new{
         title = _("Search library"),
         input = _search_query or "",
         input_type = "text",
@@ -629,10 +644,9 @@ function LibraryBrowserView:onSearch()
                     text = _("Search"),
                     is_enter_default = true,
                     callback = function()
-                        _search_query = input_dialog:getInputText()
-                        _current_page = 1
+                        local query = input_dialog:getInputText()
                         UIManager:close(input_dialog)
-                        self:_refresh()
+                        browser.search(query)
                     end,
                 },
             },
@@ -640,10 +654,8 @@ function LibraryBrowserView:onSearch()
                 {
                     text = _("Clear search"),
                     callback = function()
-                        _search_query = ""
-                        _current_page = 1
                         UIManager:close(input_dialog)
-                        self:_refresh()
+                        browser.search("")
                     end,
                 },
             },
@@ -651,12 +663,7 @@ function LibraryBrowserView:onSearch()
     }
     UIManager:show(input_dialog)
     input_dialog:onShowKeyboard()
-    return true
 end
-
-------------------------------------------------------------------------
--- Public: show library browser
--- Fetches the first ABS library, loads items, and displays the browser.
 ------------------------------------------------------------------------
 --- Public: show library browser
 --- Fetches the first ABS library, loads items, and displays the browser.
@@ -792,6 +799,39 @@ function browser.clearCoverCache()
 
     abs_logger.info("Cleared " .. count .. " cached covers")
     return count
+end
+
+--- Get current browser state (for testing and external inspection)
+-- @return table  { search_query, current_page }
+function browser.getState()
+    return {
+        search_query = _search_query,
+        current_page = _current_page,
+    }
+end
+
+--- Set search query (for testing)
+-- @param query string
+function browser._setSearchQuery(query)
+    _search_query = query
+end
+
+--- Set current page (for testing)
+-- @param page number
+function browser._setCurrentPage(page)
+    _current_page = page
+end
+
+--- Search the library by query string
+--- Sets the search query, resets to page 1, and refreshes the view.
+--- @param query string  search text (empty string clears the search)
+function browser.search(query)
+    _search_query = query or ""
+    _current_page = 1
+    abs_logger.verbose("Search: query='" .. _search_query .. "'")
+    if _view then
+        _view:_refresh()
+    end
 end
 
 return browser

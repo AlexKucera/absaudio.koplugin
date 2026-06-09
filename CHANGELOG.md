@@ -6,6 +6,12 @@ All notable changes to this project will be documented in this file. The format 
 
 ### feat
 
+- **library-browser:** expose search feature with magnifying glass icon button, InputDialog, and `browser.search()` API; show active query text next to icon
+
+### fix
+
+- **library-browser:** fix Lua closure scoping in onSearch — split `local x = expr` into `local x; x = expr` so closures in button callbacks can capture the upvalue
+
 - **library-browser:** DPI-scale cover thumbnails, compute dynamic page size from screen dimensions, fetch all covers upfront with persistent cache, add clear-cache button in settings
 
 ### fix
