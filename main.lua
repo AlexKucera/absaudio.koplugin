@@ -206,6 +206,10 @@ end
 --- Save settings with validation
 -- @param fields table  ordered array of field values from MultiInputDialog
 function ABSAudio:onSaveSettings(fields)
+    -- Guard: this handler can be invoked by KOReader close/shutdown events
+    -- where no dialog fields are provided. Only process when called from
+    -- the MultiInputDialog callback with actual field data.
+    if not fields then return end
     local server_url = fields[1] and fields[1]:match("^%s*(.-)%s*$") or ""
     local token = fields[2] and fields[2]:match("^%s*(.-)%s*$") or ""
     local download_dir = fields[3] and fields[3]:match("^%s*(.-)%s*$") or ""

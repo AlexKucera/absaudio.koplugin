@@ -14,6 +14,8 @@ All notable changes to this project will be documented in this file. The format 
 
 - **library-browser:** fix Lua closure scoping in onSearch — split `local x = expr` into `local x; x = expr` so closures in button callbacks can capture the upvalue
 
+- **settings:** guard onSaveSettings against nil fields on shutdown — prevents crash when closing emulator or KOReader broadcasts CloseWidget without dialog arguments
+
 - **library-browser:** DPI-scale cover thumbnails, compute dynamic page size from screen dimensions, fetch all covers upfront with persistent cache, add clear-cache button in settings
 
 ### fix
