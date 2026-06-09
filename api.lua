@@ -113,8 +113,8 @@ end
 -- @return boolean ok
 -- @return number|string  status_code on success, error message on failure
 local function request_with_retry(request, retry_on_5xx)
-    if not transport and not socket_http_ok then
-        return false, {type = "network", message = "Network module not available"}
+    if not transport then
+        return false, {type = "network", message = "API client not initialized — call api.init() first"}
     end
 
     local last_error

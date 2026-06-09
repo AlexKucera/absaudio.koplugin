@@ -7,6 +7,8 @@ All notable changes to this project will be documented in this file. The format 
 ### feat
 ### fix
 
+- **book-detail:** return widget from `detail.show()` so navigator can track and close the detail screen; fix widget leak on every Back press
+- **api:** guard `request_with_retry` on `transport` nil instead of `socket_http_ok` — prevent nil dereference when `api.init()` was never called
 - **dashboard:** log warning when `prepare()` fails instead of silently discarding the error
 - **library-browser:** remove stray `print()` that appeared in production logs on every module load
 
