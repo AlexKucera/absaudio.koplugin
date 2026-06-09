@@ -174,7 +174,7 @@ function BookDetailView:init()
     -- Ebook/PDF files section
     -- ABS returns media.ebookFile (singular object), not ebookFiles (plural array)
     local ebook_files = {}
-    if self.item.media and self.item.media.ebookFile then
+    if self.item.media and type(self.item.media.ebookFile) == "table" then
         local ef = self.item.media.ebookFile
         table.insert(ebook_files, {
             filename = ef.metadata and ef.metadata.filename or "ebook",
@@ -192,7 +192,7 @@ function BookDetailView:init()
 
     -- Chapters section
     local chapters = {}
-    if self.item.media and self.item.media.chapters then
+    if self.item.media and type(self.item.media.chapters) == "table" then
         chapters = self.item.media.chapters
     end
     if #chapters > 0 then

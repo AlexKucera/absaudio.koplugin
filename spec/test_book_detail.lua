@@ -824,6 +824,37 @@ run_test("_addEbookFiles detects ebook from media.ebookFile (ABS format)", funct
     mock.assert_equals(find_text_in_view(view, "Oathbringer.pdf"), true,
         "should show ebook filename from media.ebookFile")
 end)
+
+-- Regression: LuaJSON null sentinel must not crash ebookFile detection
+-- KOReader uses LuaJSON which decodes JSON null as a sentinel function (json.util.null),
+-- not nil. The code must use type() == "table" instead of truthiness.
+run_test("_addEbookFiles handles LuaJSON null sentinel for ebookFile", function()
+    local null_sentinel = function() return null_sentinel end  -- mimics json.util.null
+    local item = {
+        id = "item_null_ebook",
+        title = "Null Ebook Book",
+        mediaType = "book",
+        media = {
+            duration = 3600,
+            metadata = { title = "Null Ebook Book", authorName = "Author" },
+            ebookFile = null_sentinel,  -- LuaJSON null, not nil!
+        },
+    }
+
+    mock_api_configured = false
+    mock_manifest_books = {}
+
+    local view = detail.show({
+        item = item,
+        on_download = function(data) end,
+        on_delete = function(data) end,
+    })
+
+    -- Should NOT crash; should simply skip ebook section
+    mock.assert_equals(view ~= nil, true, "should have created a view without crashing")
+    mock.assert_equals(find_text_in_view(view, "Oathbringer.pdf"), false,
+        "should NOT show ebook filename when ebookFile is null sentinel")
+end)
 if #errors > 0 then
     print("\nFailures:")
     for _, e in ipairs(errors) do

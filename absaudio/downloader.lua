@@ -134,7 +134,7 @@ function downloader.prepare_download(item, manifest, config)
 
     -- Get audio files from expanded item
     local audio_files = {}
-    if item.media and item.media.audioFiles then
+    if item.media and type(item.media.audioFiles) == "table" then
         for _, af in ipairs(item.media.audioFiles) do
             local meta = af.metadata or {}
             table.insert(audio_files, {
@@ -308,7 +308,7 @@ function downloader.get_ebook_files(item)
     if not item or not item.media then return {} end
     local result = {}
     -- ABS returns media.ebookFile (singular object), not media.ebooks (array)
-    if item.media.ebookFile then
+    if type(item.media.ebookFile) == "table" then
         local ef = item.media.ebookFile
         local meta = ef.metadata or {}
         table.insert(result, {

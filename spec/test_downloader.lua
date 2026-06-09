@@ -1363,6 +1363,19 @@ run_test("get_ebook_files returns empty for item without ebookFile", function()
     mock.assert_equals(#result, 0, "should return empty for audio-only item")
 end)
 
+-- Regression: LuaJSON null sentinel must not crash ebookFile detection
+run_test("get_ebook_files handles LuaJSON null sentinel for ebookFile", function()
+    local null_sentinel = function() return null_sentinel end  -- mimics json.util.null
+    local item = {
+        media = {
+            audioFiles = { { ino = "1" } },
+            ebookFile = null_sentinel,  -- LuaJSON null, not nil!
+        },
+    }
+    local result = downloader.get_ebook_files(item)
+    mock.assert_equals(#result, 0, "should return empty when ebookFile is null sentinel")
+end)
+
 -- ============================================================
 -- Summary
 -- ============================================================
