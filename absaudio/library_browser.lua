@@ -564,6 +564,11 @@ function LibraryBrowserView:_refresh()
         search_query = saved_search_query,
     }
 
+    -- Keep navigator state in sync so subsequent pop() targets the live widget
+    if has_navigator then
+        nav._setCurrent(_view)
+    end
+
     UIManager:show(_view)
     UIManager:setDirty(_view, "full")
 end

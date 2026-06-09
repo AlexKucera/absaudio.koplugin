@@ -116,4 +116,11 @@ function nav.reset(name, data)
     _current_data = data
 end
 
+--- Replace the current widget reference without changing the stack.
+--- Use when a screen recreates its own widget (e.g., page navigation refresh).
+--- @param widget table  the new widget instance
+function nav._setCurrent(widget)
+    _current = widget
+end
+
 return nav

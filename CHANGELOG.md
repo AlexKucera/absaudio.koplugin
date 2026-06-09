@@ -17,6 +17,7 @@ All notable changes to this project will be documented in this file. The format 
 
 - **library-browser:** fix Lua closure scoping in onSearch — split `local x = expr` into `local x; x = expr` so closures in button callbacks can capture the upvalue
 - **nav:** fix double-close in LibraryBrowserView:onClose() and BookDetailView:onClose() — both called UIManager:close(self) then nav.pop() which also closes the widget; let nav.pop() own the close when navigator is active
+- **nav:** fix stale navigator reference after LibraryBrowserView:_refresh() recreates widget — add nav._setCurrent() helper so pop() targets the live widget instead of the closed one
 
 - **settings:** guard onSaveSettings against nil fields on shutdown — prevents crash when closing emulator or KOReader broadcasts CloseWidget without dialog arguments
 
