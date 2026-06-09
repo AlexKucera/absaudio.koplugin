@@ -563,9 +563,10 @@ end
 -- Close / navigation
 ------------------------------------------------------------------------
 function BookDetailView:onClose()
-    UIManager:close(self)
     if has_navigator then
-        nav.pop()
+        nav.pop()              -- nav.pop() owns UIManager:close(self)
+    else
+        UIManager:close(self)   -- standalone fallback
     end
     return true
 end
