@@ -65,6 +65,7 @@ They capture what was done, decisions & rationale, gotchas & fixes, and next ste
 | Date | Type | File | Summary |
 |------|------|------|----------|
 | 2026-06-09 | issue | [issue04-library-browser-search-feature_log.md](docs/devlog/20260609-issue04-library-browser-search-feature_log.md) | Search feature: TDD tests, IconWidget for search button, Lua closure fix, `browser.search()` API; search filtering in emulator still broken |
+| 2026-06-09 | issue | [issue04-library-browser-search-partial-repaint-fix_log.md](docs/devlog/20260609-issue04-library-browser-search-partial-repaint-fix_log.md) | Fixed search results rendering as partial overlay; added `UIManager:setDirty("full")` in `_refresh()` |
 | 2026-06-08 | issue | [issue04-library-browser-fixes-titles-covers-caching_log.md](docs/devlog/20260608-issue04-library-browser-fixes-titles-covers-caching_log.md) | Fixed Unknown Title (data mapping), cover art (`:`→`.` + lfs loading), recursive mkdir; 75 tests pass |
 | 2026-06-08 | issue | [issue04-cover-image-truncation-fix_log.md](docs/devlog/20260608-issue04-cover-image-truncation-fix_log.md) | Fixed truncated cover files (streaming→ltn12.sink.table bulk write); changed Accept header to image/* |
 | 2026-06-08 | issue | [issue04-cover-sizing-dynamic-pagination-persistent-caching_log.md](docs/devlog/20260608-issue04-cover-sizing-dynamic-pagination-persistent-caching_log.md) | DPI-scaled covers, dynamic per_page, persistent cover cache, clear-cache button |

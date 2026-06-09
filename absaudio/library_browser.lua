@@ -310,6 +310,7 @@ function LibraryBrowserView:_addBookList()
         per_page = self:_getPerPage(),
         search = _search_query,
     })
+    abs_logger.verbose("_addBookList: getItems returned " .. #result.items .. " items (total " .. result.total_items .. ")")
 
     self._total_pages = result.total_pages
     self._total_items = result.total_items
@@ -588,6 +589,7 @@ function LibraryBrowserView:_refresh()
     UIManager:close(self)
     _view = LibraryBrowserView:new{}
     UIManager:show(_view)
+    UIManager:setDirty(_view, "full")
 end
 
 function LibraryBrowserView:onClose()
