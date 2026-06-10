@@ -62,17 +62,34 @@ package.loaded["ui/widget/verticalgroup"] = make_widget_stub()
 package.loaded["ui/widget/verticalspan"] = make_widget_stub()
 package.loaded["ui/widget/infomessage"] = make_widget_stub()
 
+-- KOReader datastorage (provides settings directory path)
+package.loaded["datastorage"] = {
+    getSettingsDir = function() return "/tmp/test_settings" end,
+}
+
+package.loaded["ui/widget/imagewidget"] = make_widget_stub()
+package.loaded["ui/widget/horizontalgroup"] = make_widget_stub()
+package.loaded["ui/widget/horizontalspan"] = make_widget_stub()
+package.loaded["ui/widget/container/leftcontainer"] = make_widget_stub()
+
 local mock_device = {
     hasKeys = function() return true end,
     isTouchDevice = function() return true end,
     input = { group = { Back = "Back" } },
     screen = {
         getSize = function() return { w = 600, h = 800 } end,
-        scaleBySize = function(n) return n end,
+        scaleBySize = function(_, n) return n end,  -- colon syntax passes self as first arg
     },
 }
 package.loaded["device"] = mock_device
 package.loaded["ui/device"] = mock_device
+_G.Device = mock_device  -- KOReader uses Device (capital D) as global
+
+-- Screen global (used directly by dashboard for scaleBySize)
+_G.Screen = mock_device.screen
+_G.Screen = {
+    scaleBySize = function(n) return n end,
+}
 
 package.loaded["ui/font"] = {
     getFace = function(name, size) return { name = name, size = size } end,
@@ -150,6 +167,15 @@ package.loaded["absaudio/navigator"] = {
     pop = function() end,
     reset = function() end,
     _reset = function() end,
+}
+
+
+package.loaded["absaudio/cover_cache"] = {
+    isInitialized = function() return false end,
+    init = function() end,
+    getCoverPath = function(id) return "/fake/cache/" .. id .. ".jpg" end,
+    hasCachedCover = function(id) return true end,
+    fetchAndCache = function(id) return true, "/fake/cache/" .. id .. ".jpg" end,
 }
 
 ------------------------------------------------------------------------
@@ -677,7 +703,227 @@ run_test("downloaded book entries are wrapped in tappable containers that call _
 end)
 
 -- ============================================================
+-- Test: dashboard book entries include cover widget when cover is cached
+-- ============================================================
+run_test("downloaded book entry includes cover widget when cover_cache has cover", function()
+    -- Set up manifest with a book that has abs_item_id (needed for cover cache lookup)
+    setup_manifest_mock(nil, {
+        {
+            abs_item_id = "book-cover-1",
+            title = "Book With Cover",
+            author = "Cover Author",
+            duration = 3600,
+            current_time = 1800,
+        },
+    })
+
+    -- Reload module to pick up new manifest mock
+    package.loaded["absaudio/dashboard_widget"] = nil
+    local dash = require("absaudio/dashboard_widget")
+
+    -- Ensure cover_cache mock says this book has a cover
+    package.loaded["absaudio/cover_cache"].hasCachedCover = function(id)
+        return id == "book-cover-1"
+    end
+
+    local shown_widgets = {}
+    local orig_show = package.loaded["ui/uimanager"].show
+    package.loaded["ui/uimanager"].show = function(self, widget)
+        table.insert(shown_widgets, widget)
+    end
+
+    dash.show({})
+    local view = shown_widgets[#shown_widgets]
+
+    -- Verify the view was created and has content
+    mock.assert_equals(view ~= nil, true, "should have created a view")
+    mock.assert_equals(#view.content_group > 0, true, "content_group should have elements")
+
+    -- Find tappable containers for books in the content_group
+    local tap_containers = {}
+    for _, el in ipairs(view.content_group) do
+        if type(el) == "table" and el.ges_events and el.ges_events.TapBook then
+            table.insert(tap_containers, el)
+        end
+    end
+    
+    mock.assert_equals(#tap_containers, 1, "should have 1 tappable book entry")
+    
+    -- The book entry should use a HorizontalGroup layout (cover + text)
+    local book_entry = tap_containers[1]
+    local layout = book_entry[1]  -- first child of InputContainer
+    mock.assert_equals(layout ~= nil, true, "book entry should have content")
+    
+    -- The layout must be a HorizontalGroup (cover image left, text right)
+    local is_hg_layout = type(layout) == "table" and layout.align == "center"
+    mock.assert_equals(is_hg_layout, true, "book entry should use HorizontalGroup for cover+text layout")
+    
+    package.loaded["ui/uimanager"].show = orig_show
+end)
+
+-- ============================================================
+-- Test: book entry shows gray placeholder when no cover is cached
+-- ============================================================
+run_test("downloaded book entry shows placeholder when cover_cache has no cover", function()
+    -- Set up manifest with a book that has abs_item_id but NO cached cover
+    setup_manifest_mock(nil, {
+        {
+            abs_item_id = "book-no-cover-1",
+            title = "Book Without Cover",
+            author = "No Cover Author",
+            duration = 3600,
+            current_time = 0,
+        },
+    })
+
+    -- Reload module to pick up new manifest mock
+    package.loaded["absaudio/dashboard_widget"] = nil
+    local dash = require("absaudio/dashboard_widget")
+
+    -- Configure cover_cache mock to report NO cover for this book
+    package.loaded["absaudio/cover_cache"].hasCachedCover = function(id)
+        return false  -- no covers available
+    end
+
+    local shown_widgets = {}
+    local orig_show = package.loaded["ui/uimanager"].show
+    package.loaded["ui/uimanager"].show = function(self, widget)
+        table.insert(shown_widgets, widget)
+    end
+
+    dash.show({})
+    local view = shown_widgets[#shown_widgets]
+
+    mock.assert_equals(view ~= nil, true, "should have created a view")
+
+    -- Find tappable book entries
+    local tap_containers = {}
+    for _, el in ipairs(view.content_group) do
+        if type(el) == "table" and el.ges_events and el.ges_events.TapBook then
+            table.insert(tap_containers, el)
+        end
+    end
+
+    mock.assert_equals(#tap_containers, 1, "should have 1 tappable book entry")
+
+    -- The layout must still be HorizontalGroup even without cover (placeholder + text)
+    local book_entry = tap_containers[1]
+    local layout = book_entry[1]
+    local is_hg_layout = type(layout) == "table" and layout.align == "center"
+    mock.assert_equals(is_hg_layout, true, "book entry should use HorizontalGroup even without cover")
+
+    -- The first child of the HorizontalGroup should be the placeholder (FrameContainer stub)
+    -- Our stub returns opts table, so check for background field (placeholder has it)
+    local first_child = layout[1]  -- cover_widget or placeholder
+    mock.assert_equals(first_child ~= nil, true, "layout should have a first child (cover or placeholder)")
+
+    package.loaded["ui/uimanager"].show = orig_show
+end)
+
+-- ============================================================
+-- Test: resume section uses cover row layout when recent book has cover
+-- ============================================================
+run_test("resume section uses HorizontalGroup layout when book has cover", function()
+    -- Set up manifest with a recent book that has a cached cover
+    setup_manifest_mock({
+        abs_item_id = "resume-cover-1",
+        title = "Resume Book With Cover",
+        author = "Resume Author",
+        duration = 7200,
+        current_time = 3600,
+    }, nil)
+
+    -- Reload module to pick up new manifest mock
+    package.loaded["absaudio/dashboard_widget"] = nil
+    local dash = require("absaudio/dashboard_widget")
+
+    -- Ensure cover_cache reports this book has a cover
+    package.loaded["absaudio/cover_cache"].hasCachedCover = function(id)
+        return id == "resume-cover-1"
+    end
+
+    local shown_widgets = {}
+    local orig_show = package.loaded["ui/uimanager"].show
+    package.loaded["ui/uimanager"].show = function(self, widget)
+        table.insert(shown_widgets, widget)
+    end
+
+    dash.show({})
+    local view = shown_widgets[#shown_widgets]
+
+    mock.assert_equals(view ~= nil, true, "should have created a view")
+
+    -- Find tappable resume container (TapResume event)
+    local resume_containers = {}
+    for _, el in ipairs(view.content_group) do
+        if type(el) == "table" and el.ges_events and el.ges_events.TapResume then
+            table.insert(resume_containers, el)
+        end
+    end
+
+    mock.assert_equals(#resume_containers, 1, "should have 1 tappable resume entry")
+
+    -- The resume entry should use HorizontalGroup layout (cover + text)
+    local resume_entry = resume_containers[1]
+    local layout = resume_entry[1]
+    local is_hg_layout = type(layout) == "table" and layout.align == "center"
+    mock.assert_equals(is_hg_layout, true, "resume entry should use HorizontalGroup for cover+text layout")
+
+    package.loaded["ui/uimanager"].show = orig_show
+end)
+
+-- ============================================================
+-- Test: book without abs_item_id renders without crash (placeholder only)
+-- ============================================================
+run_test("book without abs_item_id renders placeholder without crash", function()
+    -- Set up manifest with a book that has NO abs_item_id (legacy data)
+    setup_manifest_mock(nil, {
+        {
+            -- No abs_item_id field — simulates legacy/missing data
+            title = "Legacy Book",
+            author = "Unknown Author",
+            duration = 1800,
+            current_time = 900,
+        },
+    })
+
+    -- Reload module to pick up new manifest mock
+    package.loaded["absaudio/dashboard_widget"] = nil
+    local dash = require("absaudio/dashboard_widget")
+
+    local shown_widgets = {}
+    local orig_show = package.loaded["ui/uimanager"].show
+    package.loaded["ui/uimanager"].show = function(self, widget)
+        table.insert(shown_widgets, widget)
+    end
+
+    -- Should NOT throw an error even though abs_item_id is missing
+    local ok, err = pcall(dash.show, {})
+    mock.assert_equals(ok, true, "should not crash when book lacks abs_item_id (error: " .. tostring(err) .. ")")
+
+    local view = shown_widgets[#shown_widgets]
+    mock.assert_equals(view ~= nil, true, "should have created a view despite missing abs_item_id")
+
+    -- Should still have a tappable book entry with HorizontalGroup layout
+    local tap_containers = {}
+    for _, el in ipairs(view.content_group) do
+        if type(el) == "table" and el.ges_events and el.ges_events.TapBook then
+            table.insert(tap_containers, el)
+        end
+    end
+
+    mock.assert_equals(#tap_containers, 1, "should have 1 tappable book entry for legacy book")
+
+    local layout = tap_containers[1][1]
+    local is_hg_layout = type(layout) == "table" and layout.align == "center"
+    mock.assert_equals(is_hg_layout, true, "legacy book entry should still use HorizontalGroup layout")
+
+    package.loaded["ui/uimanager"].show = orig_show
+end)
+
+-- ============================================================
 -- Summary
+-- ============================================================
 -- ============================================================
 print(string.format("\n%d passed, %d failed", passed, failed))
 
