@@ -619,7 +619,9 @@ end
 -- @return number|nil  free bytes
 ------------------------------------------------------------------------
 function downloader.get_free_space(path)
-    local handle = io.popen("df -k '" .. path .. "' 2>/dev/null | tail -1 | awk '{print $4}'")
+    -- Escape single quotes for safe shell interpolation
+    local safe_path = path:gsub("'", "'\\\"'" )
+    local handle = io.popen("df -k '" .. safe_path .. "' 2>/dev/null | tail -1 | awk '{print $4}'")
     if handle then
         local result = handle:read("*n")
         handle:close()
