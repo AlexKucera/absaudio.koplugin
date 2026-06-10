@@ -1100,9 +1100,9 @@ run_test("BookDetailView:_onDownloadBook calls start_chunked_download and schedu
     -- Override scheduleIn locally to execute small-delay callbacks (so download pipeline runs)
     local uim = package.loaded["ui/uimanager"]
     local orig_scheduleIn = uim.scheduleIn
-    uim.scheduleIn = function(delay, fn)
-        orig_scheduleIn(delay, fn)
-        if not delay or delay <= 0.2 then fn() end
+        uim.scheduleIn = function(delay, fn)
+            orig_scheduleIn(delay, fn)
+            if type(delay) == "number" and (not delay or delay <= 0.2) then fn() end
     end
     -- Call should not error — exercises full pipeline with pre-load mocks
     view:_onDownloadBook(item, false)
@@ -1241,6 +1241,46 @@ end
 
 -- Ebook per-type status tested in test_downloader.lua (slices 11-13)
 -- Book detail UI tests for ebook status + Open Ebook button covered by _addEbookFiles tests
+
+-- ============================================================
+-- Regression: download guard uses correct variable name (has_abs_config)
+-- ============================================================
+
+run_test("_onDownloadBook does not show 'not available' when modules loaded", function()
+    -- This regression test catches the bug where the guard checked
+    -- has_config (nil/undeclared) instead of has_abs_config,
+    -- causing ALL downloads to show "Download not available"
+    local view = detail._renderView({
+        title = "Guard Test",
+        id = "regress_guard",
+        authors = {},
+        series = nil,
+        description = "test",
+        narrators = {},
+        duration_seconds = 3600,
+        cover_url = nil,
+        formats = { audiobook = { id = "fmt1" } },
+        ebook_formats = {},
+        status = {},
+    })
+    assert(view.detail_ref, "detail_ref should exist")
+
+    -- All requires should have succeeded in this test environment
+    -- so calling _onDownloadBook should NOT trigger the availability guard
+    local info_shown = false
+    local uim = package.loaded["ui/uimanager"]
+    local orig_show = uim.show
+    uim.show = function(_, w)
+        if w.text and w.text:find("not available") then
+            info_shown = true
+        end
+    end
+
+    pcall(function() view.detail_ref:_onDownloadBook({ id = "test", formats = { audiobook = { id = "fmt1" } } }, false) end)
+
+    uim.show = orig_show
+    assert(not info_shown, "should NOT show 'download not available' when modules are present")
+end)
 
 print(string.format("\n%d passed, %d failed", passed, failed))
 

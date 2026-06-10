@@ -18,6 +18,7 @@ All notable changes to this project will be documented in this file. The format 
 - **downloader:** fix `config:get` colon-calls to `config.get` dot-calls so user-configured download directory and preferred format are actually read
 - **dashboard:** remove ~278 lines of broken duplicate handler code; `_onBookTap` now passes item-only to detail view; add missing `onClose()` method
 - **library-browser:** strip callback parameters from detail navigation calls (behavior now lives in book_detail)
+- **book-detail:** fix copy-paste bugs in _onDownloadBook: wrong require path (`absaudio/config` → `config`), guard variable name mismatch, and stray `)` inside gmatch pattern string that caused `invalid pattern capture` crash on download start
 - **dashboard:** fix non-existent `downloader.download_single_file` call — replaced with correct API `start_chunked_download(entry, file, deps)`; also fixed wrong argument order `(file, entry, deps)` → `(entry, file, deps)`
 - **dashboard:** fix emulator crash on dashboard show — missing `cover_cache` require caused fallback to TextWidget without `face` parameter (nil face crash at font.lua:386); added proper face matching library_browser pattern
 - **dashboard:** fix KOReader `config` variable shadowing — renamed absaudio config to `abs_config` to avoid overwriting built-in `config` module

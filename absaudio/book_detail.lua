@@ -46,7 +46,7 @@ local has_cover_cache, cover_cache = pcall(require, "absaudio/cover_cache")
 local library_store = require("absaudio/library_store")
 local has_navigator, nav = pcall(require, "absaudio/navigator")
 local has_downloader, downloader = pcall(require, "absaudio/downloader")
-local has_abs_config, abs_config = pcall(require, "absaudio/config")
+local has_config, config = pcall(require, "config")
 local has_progress, progress = pcall(require, "absaudio/download_progress")
 local ConfirmBox = require("ui/widget/confirmbox")
 
@@ -912,7 +912,7 @@ function BookDetailView:_onDownloadBook(item, ebook_only)
     local total_sizes = downloader.calculate_download_size(result.files)
     local needed = total_sizes
     if needed > 0 then
-        local dl_dir = abs_config.get("download_dir") or "/tmp"
+        local dl_dir = config.get("download_dir") or "/tmp"
         local free_bytes = downloader.get_free_space(dl_dir)
         if free_bytes and not downloader.check_free_space(needed, free_bytes) then
             UIManager:show(InfoMessage:new{
@@ -943,7 +943,7 @@ function BookDetailView:_onDownloadBook(item, ebook_only)
         fs = {
             mkdir = function(path)
                 local parts = {}
-                for part in path:gmatch("[^/]+)") do
+                for part in path:gmatch("[^/]+") do
                     table.insert(parts, part)
                 end
                 local current = ""
