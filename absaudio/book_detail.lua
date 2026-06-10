@@ -54,6 +54,12 @@ local detail = {}
 -- or returns basic item data. Returns (data, nil) or (nil, error_info).
 ------------------------------------------------------------------------
 function detail.prepare(item)
+    -- Initialize cover cache (idempotent — safe to call from any entry path)
+    if has_cover_cache and not cover_cache.isInitialized() then
+        local DataStorage = require("datastorage")
+        cover_cache.init(DataStorage:getSettingsDir() .. "/absaudio_covers")
+    end
+
     -- Initialize manifest for potential fallback
     if has_manifest then
         manifest.init()

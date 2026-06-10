@@ -60,6 +60,7 @@ They capture what was done, decisions & rationale, gotchas & fixes, and next ste
 
 | Date | Type | File | Summary |
 |------|------|------|----------|
+| 2026-06-10 | generic | [fix-dashboard-book-tap-cover-cache-nil-crash_log.md](docs/devlog/20260610-fix-dashboard-book-tap-cover-cache-nil-crash_log.md) | Fixed crash on dashboard book tap; added `cover_cache.init()` to `detail.prepare()` with idempotent guard; 311 tests pass |
 | 2026-06-10 | issue | [fix-ebook-cancel-redownload-crash-nil-id_log.md](docs/devlog/20260610-fix-ebook-cancel-redownload-crash-nil-id_log.md) | Fixed crash on ebook re-download after cancel; unwrapped `{item, ebook_only}` envelope in 3 re-push callbacks; 15 library_browser tests pass |
 | 2026-06-10 | issue | [fix-ebook-download-stub-never-executes_log.md](docs/devlog/20260610-fix-ebook-download-stub-never-executes_log.md) | Fixed ebook download never executing (TODO stub returned early); unified ebook+audio into shared download pipeline; 282 tests pass |
 | 2026-06-10 | issue | [fix-download-resume-resets-to-zero_log.md](docs/devlog/20260610-fix-download-resume-resets-to-zero_log.md) | Fixed resume always starting from zero; skip `prepare_download` for partial downloads (preserves "partial" status); fixed progress display to show already-downloaded bytes; 4 new tests; 77 downloader tests pass |

@@ -181,6 +181,8 @@ package.loaded["manifest"] = {
 
 -- Mock cover_cache
 package.loaded["absaudio/cover_cache"] = {
+    isInitialized = function() return true end,
+    init = function() end,
     hasCachedCover = function() return false end,
     getCoverPath = function() return nil end,
     fetchAndCache = function() return false end,

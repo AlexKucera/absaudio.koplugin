@@ -24,6 +24,7 @@ All notable changes to this project will be documented in this file. The format 
 - **library-browser:** wire download/delete callbacks through navigator to book detail view
 - **manifest:** fix `init()` discarding in-memory download state by re-reading from disk — make init idempotent (no-op after first call), add `flush()` to all mutating functions so changes persist
 - **book-detail:** fix checkerboard cover after download — verify `cover.jpg` exists on disk before using it, fall through to cached cover or placeholder
+- **cover-cache:** fix crash when tapping downloaded book on dashboard — `cover_cache.init()` was only called in library browser path; moved init into `detail.prepare()` with idempotent guard so it runs from any entry path
 
 ### fix
 
