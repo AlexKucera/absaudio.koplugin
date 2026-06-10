@@ -789,8 +789,15 @@ function LibraryBrowserView:_onDownloadBook(item, ebook_only)
             if has_progress then progress.update(state) end
 
             if still_running then
-                -- Yield back to event loop, resume on next tick
-                UIManager:scheduleIn(0, pump)
+                -- Yield back to event loop, resume in 50ms.
+                -- NOTE: Must use a positive delay, NOT 0!
+                -- UIManager's handleInput() drains ALL due tasks in a
+                -- repeat…until loop before processing input events.
+                -- scheduleIn(0) makes the task "due now", so the drain
+                -- loop never exits and cancel taps are never processed.
+                -- 50ms gives the event loop time to process taps while
+                -- still pumping ~20 chunks/sec (plenty for progress UI).
+                UIManager:scheduleIn(0.05, pump)
             else
                 -- Download finished for this file
                 local ok, reason = handle:finalize()
@@ -803,15 +810,15 @@ function LibraryBrowserView:_onDownloadBook(item, ebook_only)
                     return
                 end
 
-                -- Schedule next file
-                UIManager:scheduleIn(0, function()
+                -- Schedule next file (small delay to let event loop process input)
+                UIManager:scheduleIn(0.05, function()
                     schedule_next(idx + 1)
                 end)
             end
         end
 
-        -- Start pumping
-        UIManager:scheduleIn(0, pump)
+        -- Start pumping (small delay to let event loop process input)
+        UIManager:scheduleIn(0.05, pump)
     end
 
     UIManager:scheduleIn(0.1, function()

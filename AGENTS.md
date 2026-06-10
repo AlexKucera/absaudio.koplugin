@@ -22,6 +22,7 @@
 - Use `UIManager:scheduleIn(0.1, ...)` to defer widget shows after menu close — TouchMenu calls callbacks synchronously before `closeMenu()` (source: `docs/devlog/20260608-dashboard-widget-fullscreen-rendering-fixes_log.md`)
 - Show the new widget **before** closing the old one, then schedule the close — closing first destroys context (source: `docs/devlog/20260608-issue04-library-browser-book-detail-view_log.md`)
 - `UIManager:scheduleIn` silently swallows Lua errors — use synchronous `pcall` for critical logic (source: `docs/devlog/20260608-issue04-library-browser-book-detail-view_log.md`)
+- **Never use `scheduleIn(0, fn)` for pump loops** — `UIManager:handleInput()` drains ALL due tasks in a `repeat…until` loop before processing input events. `scheduleIn(0)` makes tasks "due now" (`time.now() + 0`), so each pump reschedules itself as immediately due, starving the event loop of input. Cancel taps, gestures, and key events are queued but never dispatched. Use `scheduleIn(0.05, fn)` (50ms) instead — the drain loop exits, input is processed, and ~20 pumps/sec is plenty for progress UI. (source: cancel-download-hang fix)
 - Use `UIManager:setDirty(widget, "full")` after widget swaps — e-ink default `"fast"` mode leaves stale framebuffer content (source: `docs/devlog/20260609-issue04-library-browser-search-partial-repaint-fix_log.md`)
 - Registering `ges_events.Swipe` intercepts ALL swipes — don't register it on widgets with ScrollableContainer children (source: `docs/devlog/20260608-issue04-library-browser-scrolling-pagination-fix_log.md`)
 
@@ -29,6 +30,7 @@
 - Valid font names: `cfont`, `tfont`, `smalltfont`, `x_smalltfont`, `largeffont`, `scfont` — use with explicit size: `Font:getFace("tfont", 26)` (source: `docs/devlog/20260608-dashboard-widget-fullscreen-rendering-fixes_log.md`)
 - DPI-scale images (`Screen:scaleBySize()`) but use fixed sizes for text — DPI-scaled text is enormous on 300 DPI devices (source: `docs/devlog/20260608-issue04-cover-sizing-dynamic-pagination-persistent-caching_log.md`)
 - Emojis don't render in TextWidget — use `IconWidget` with built-in icon names (e.g., `appbar.search`) (source: `docs/devlog/20260609-issue04-library-browser-search-feature_log.md`)
+- **Socket reads block the coroutine** — `sock:receive()` inside a coroutine is synchronous; it blocks until data arrives or timeout expires. For cancellable downloads, yield between chunks and use a small `scheduleIn` delay (not 0) so the UI event loop can process cancel taps between reads. Set socket timeout low (e.g. 10s) so a stalled server doesn't freeze the UI for 30s per chunk. (source: cancel-download-hang fix)
 
 ### Lua Gotchas
 - **Closure scoping:** `local x = { cb = function() x:method() end }` — `x` isn't declared yet when closure is created. Fix: `local x; x = Table:new{...}` (source: `docs/devlog/20260609-issue04-library-browser-search-feature_log.md`)
@@ -53,6 +55,7 @@ They capture what was done, decisions & rationale, gotchas & fixes, and next ste
 
 | Date | Type | File | Summary |
 |------|------|------|----------|
+| 2026-06-10 | issue | [fix-cancel-download-hang-starves-event-loop_log.md](docs/devlog/20260610-fix-cancel-download-hang-starves-event-loop_log.md) | Fixed cancel-download hanging emulator; `scheduleIn(0)` starved UIManager event loop; changed to `scheduleIn(0.05)`; 278 tests pass |
 | 2026-06-10 | issue | [fix-manifest-init-discard-download-state_log.md](docs/devlog/20260610-fix-manifest-init-discard-download-state_log.md) | Fixed manifest.init() discarding in-memory download state (idempotent init + flush); fixed checkerboard cover after download (existence check); 3 new tests; 298 total pass |
 | 2026-06-09 | issue | [fix-yield-across-c-call-boundary-download_log.md](docs/devlog/20260609-fix-yield-across-c-call-boundary-download_log.md) | Fixed `attempt to yield across C-call boundary` in audiobook downloads; created raw socket `chunked_http.lua` module; 6 new tests; 295 total pass |
 | 2026-06-09 | issue | [issue19-library-browser-data-render-split_log.md](docs/devlog/20260609-issue19-library-browser-data-render-split_log.md) | Extracted `browser.prepare()` from `show()`; data/render split; eliminated redundant `getItems` in `_addPageNav`; 5 new tests; 163 total pass |
@@ -74,7 +77,7 @@ They capture what was done, decisions & rationale, gotchas & fixes, and next ste
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **absaudio.koplugin** (437 symbols, 432 relationships, 0 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **absaudio.koplugin** (445 symbols, 441 relationships, 0 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
