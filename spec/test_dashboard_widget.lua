@@ -576,6 +576,56 @@ run_test("_onBookTap pushes 'detail' screen with item.id mapped from abs_item_id
     package.loaded["absaudio/navigator"].push = function() end
 end)
 
+
+-- Test: _onBookTap wires download/delete/open callbacks and enriches item data
+-- ============================================================
+run_test("_onBookTap passes on_download/on_delete/on_open_ebook callbacks", function()
+    local pushed = {}
+    package.loaded["absaudio/navigator"].push = function(name, data)
+        table.insert(pushed, { name = name, data = data })
+    end
+
+    local shown_widgets = {}
+    local orig_show = package.loaded["ui/uimanager"].show
+    package.loaded["ui/uimanager"].show = function(self, widget)
+        table.insert(shown_widgets, widget)
+    end
+
+    dashboard.show({})
+    local view = shown_widgets[#shown_widgets]
+
+    -- Book with manifest fields (duration, chapters, files)
+    local book = {
+        abs_item_id = "book-456",
+        title = "Enriched Book",
+        author = "Rich Author",
+        duration = 3600,
+        chapters = { { title = "Ch1", start = 0, ["end"] = 1800 } },
+        files = {{ filename = "test.mp3", type = "audio", status = "complete" }},
+        local_dir = "/tmp/audiobooks/Author_Book",
+    }
+    view:_onBookTap(book)
+
+    mock.assert_equals(#pushed, 1, "should have called nav.push once")
+    local data = pushed[1].data
+
+    -- Callbacks must be present (functions)
+    mock.assert_equals(type(data.on_download), "function", "on_download should be a function")
+    mock.assert_equals(type(data.on_delete), "function", "on_delete should be a function")
+    mock.assert_equals(type(data.on_open_ebook), "function", "on_open_ebook should be a function")
+
+    -- Item should be enriched with manifest fields
+    mock.assert_equals(data.item.id, "book-456", "item.id from abs_item_id")
+    mock.assert_equals(data.item.duration, 3600, "duration should be passed through")
+    mock.assert_equals(#data.item.chapters, 1, "chapters should be passed through")
+    mock.assert_equals(data.item.local_dir, "/tmp/audiobooks/Author_Book", "local_dir should be passed through")
+    mock.assert_equals(data.item.media.duration, 3600, "media.duration should mirror duration")
+    mock.assert_equals(#data.item.media.chapters, 1, "media.chapters should mirror chapters")
+
+    package.loaded["ui/uimanager"].show = orig_show
+    package.loaded["absaudio/navigator"].push = function() end
+end)
+
 run_test("downloaded book entries are wrapped in tappable containers that call _onBookTap", function()
     -- Set up manifest mock with two books (same pattern as other tests)
     setup_manifest_mock(nil, {
