@@ -35,6 +35,9 @@ local _widget = nil  -- reference to current widget
 -- @return string  formatted progress text
 ------------------------------------------------------------------------
 function progress.format_progress_info(state)
+    if not state or type(state.progress_fraction) ~= "function" then
+        return _("Preparing download…")
+    end
     local current = state.current_file or 0
     local total = state.total_files or 0
     local downloaded = state.bytes_downloaded or 0
@@ -112,7 +115,7 @@ function DownloadProgressView:init()
     table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.default })
 
     -- Progress text (updated dynamically)
-    local info_text = progress.format_progress_info(self.state or {})
+    local info_text = progress.format_progress_info(self.state)
     self.progress_text = TextWidget:new{
         text = info_text,
         face = Font:getFace("cfont", 16),

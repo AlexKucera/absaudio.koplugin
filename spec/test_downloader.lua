@@ -1025,6 +1025,22 @@ run_test("format_progress_info handles zero bytes", function()
     local info = progress_mod.format_progress_info(state)
     mock.assert_equals(info:find("file 0 of 0") ~= nil, true, "should handle zero state")
 end)
+
+run_test("format_progress_info returns safe default for nil state", function()
+    local progress_mod = require("absaudio/download_progress")
+    -- Must not crash — was: attempt to call nil 'progress_fraction'
+    local info = progress_mod.format_progress_info(nil)
+    mock.assert_equals(type(info), "string", "should return string for nil state")
+    mock.assert_equals(#info > 0, true, "should return non-empty string")
+end)
+
+run_test("format_progress_info returns safe default for empty table", function()
+    local progress_mod = require("absaudio/download_progress")
+    -- The old `or {}` fallback guaranteed this crash
+    local info = progress_mod.format_progress_info({})
+    mock.assert_equals(type(info), "string", "should return string for {} state")
+    mock.assert_equals(#info > 0, true, "should return non-empty string")
+end)
 -- ============================================================
 -- Slice 14: execute_single_file_download
 -- ============================================================
