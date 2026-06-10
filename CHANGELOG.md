@@ -7,14 +7,14 @@ All notable changes to this project will be documented in this file. The format 
 ### feat
 - **download-progress:** add download progress widget with file count, percentage, ETA, and cancel button
 - **download:** add free space check before downloads using `df` command
-- **download:** add coroutine-based chunked download (`start_chunked_download`) that yields to KOReader event loop every ~512KB, enabling progress updates and cancel during large file transfers
+- **download:** add coroutine-based chunked download (`start_chunked_download`) using raw socket I/O via `chunked_http` module that yields to KOReader event loop every 32KB, enabling progress updates and cancel during large file transfers
 - **download:** add ebook download button in book detail view with `ebook_only` flag
 - **api:** add `downloadFile` endpoint with Range header support for resuming partial downloads
 
 ### fix
 - **book-detail:** fix ebook file detection — ABS API returns `media.ebookFile` (singular object), not `ebookFiles` (plural array); convert to internal format with fallback
 - **downloader:** fix `get_ebook_files` to check `media.ebookFile` first (ABS format), falling back to `media.ebooks`
-- **download:** fix UI freezing during large file downloads — replace single synchronous `socket.http.request` with coroutine-based chunked approach that yields to event loop
+- **download:** fix `attempt to yield across C-call boundary` crash — `socket.http.request` wraps everything in `socket.protect(pcall)`, making `coroutine.yield()` inside ltn12 sinks impossible; created raw socket `chunked_http` module that reads body chunks via `sock:receive()` and yields between reads in pure Lua context, bypassing C-boundary entirely
 - **library-browser:** wire free space check to show InfoMessage when insufficient disk space
 - **library-browser:** wire download/delete callbacks through navigator to book detail view
 

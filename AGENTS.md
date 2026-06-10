@@ -37,6 +37,9 @@
 ### Networking
 - Use `ltn12.sink.table()` + bulk `file:write()` for binary responses — streaming `file_sink` produces truncated files at TLS chunk boundaries (source: `docs/devlog/20260608-issue04-cover-image-truncation-fix_log.md`)
 
+### ABS API Testing
+- Credentials for direct API testing are in `login.txt` at the project root (server URL + API token). Use `curl -H "Authorization: Bearer $TOKEN" $URL/api/libraries` to verify connectivity or explore endpoints without going through the plugin.
+
 ## Session Logs
 
 Session logs are written to `docs/devlog/` after each completed task, issue fix, or milestone.
@@ -50,6 +53,7 @@ They capture what was done, decisions & rationale, gotchas & fixes, and next ste
 
 | Date | Type | File | Summary |
 |------|------|------|----------|
+| 2026-06-09 | issue | [fix-yield-across-c-call-boundary-download_log.md](docs/devlog/20260609-fix-yield-across-c-call-boundary-download_log.md) | Fixed `attempt to yield across C-call boundary` in audiobook downloads; created raw socket `chunked_http.lua` module; 6 new tests; 295 total pass |
 | 2026-06-09 | issue | [issue19-library-browser-data-render-split_log.md](docs/devlog/20260609-issue19-library-browser-data-render-split_log.md) | Extracted `browser.prepare()` from `show()`; data/render split; eliminated redundant `getItems` in `_addPageNav`; 5 new tests; 163 total pass |
 | 2026-06-09 | issue | [issue16-shared-widget-helpers-deduplication_log.md](docs/devlog/20260609-issue16-shared-widget-helpers-deduplication_log.md) | Created `widget_helpers.lua` module; extracted triplicated `format_duration`, `format_time`, `format_file_size`, `addSeparator` from 3 widgets; removed `get_item_title`/`get_item_author` duplicates; 31 new tests; 159 total pass |
 | 2026-06-09 | issue | [issue14-book-detail-instance-state-migration_log.md](docs/devlog/20260609-issue14-book-detail-instance-state-migration_log.md) | Migrated `_on_back`/`_on_download` from module-level locals to `self.on_back`/`self.on_download` on BookDetailView; added callback isolation tests; 96 tests pass |
@@ -69,7 +73,7 @@ They capture what was done, decisions & rationale, gotchas & fixes, and next ste
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **absaudio.koplugin** (426 symbols, 426 relationships, 0 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **absaudio.koplugin** (437 symbols, 432 relationships, 0 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

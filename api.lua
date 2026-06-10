@@ -514,4 +514,13 @@ function api.is_configured()
         and auth_token ~= nil and auth_token ~= ""
 end
 
+--- Build the full download URL for a file (used by chunked_http)
+-- @param item_id string
+-- @param ino string
+-- @return string full URL with token
+function api.getDownloadUrl(item_id, ino)
+    local path = "/api/items/" .. item_id .. "/file/" .. ino
+    return server_url .. path .. "?token=" .. (auth_token or "")
+end
+
 return api

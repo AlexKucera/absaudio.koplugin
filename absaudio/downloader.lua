@@ -564,9 +564,11 @@ end
 
 ------------------------------------------------------------------------
 -- Start a chunked (coroutine-based) download of a single file.
--- The sink yields to the caller every YIELD_INTERVAL chunks, allowing
--- KOReader's UIManager event loop to process UI events (progress
--- updates, cancel taps) between chunks.
+--
+-- Uses raw socket I/O via chunked_http to avoid the C-call boundary
+-- problem in socket.http.request, yielding between chunk reads so
+-- KOReader's UIManager event loop can process UI events (progress
+-- updates, cancel taps).
 --
 -- Returns a handle table with:
 --   .pump()       — resume coroutine; returns true if still running
@@ -592,28 +594,26 @@ function downloader.start_chunked_download(entry, file, deps)
         return nil, "file_open_error"
     end
 
-    local chunk_count = 0
-    local YIELD_INTERVAL = 64  -- yield every 64 chunks (~64 * 8KB = 512KB)
     local cancelled = false
     local done = false
     local download_ok = false
 
-    -- Sink that writes chunks and yields periodically
-    local function yielding_sink(chunk)
-        if chunk then
-            file_handle:write(chunk)
-            deps.state.bytes_downloaded = deps.state.bytes_downloaded + #chunk
-            chunk_count = chunk_count + 1
-            if chunk_count % YIELD_INTERVAL == 0 then
-                coroutine.yield()  -- return to UIManager event loop
-            end
-        end
-        return true  -- ltn12 sinks must return true to continue
-    end
+    -- Build the download URL
+    local download_url = deps.api.getDownloadUrl(entry.abs_item_id, file.ino)
 
+    -- Get the chunked_http module (injected or required)
+    local chunked_http = deps.chunked_http or require("absaudio.chunked_http")
+
+    -- Coroutine: performs raw socket download, yields between chunks
     local co = coroutine.create(function()
-        local ok, result = deps.api.downloadFile(
-            entry.abs_item_id, file.ino, yielding_sink, extra_headers)
+        local ok, result = chunked_http.download(
+            download_url,
+            extra_headers,
+            function(chunk)
+                file_handle:write(chunk)
+                deps.state.bytes_downloaded = deps.state.bytes_downloaded + #chunk
+            end
+        )
         download_ok = ok
         done = true
         return ok, result

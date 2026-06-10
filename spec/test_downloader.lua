@@ -1161,12 +1161,21 @@ run_test("start_chunked_download pumps coroutine and finalizes", function()
             end,
         },
         api = {
-            downloadFile = function(item_id, ino, sink, headers)
+            getDownloadUrl = function(item_id, ino)
+                return "https://example.com/api/items/" .. item_id .. "/file/" .. ino .. "?token=test"
+            end,
+        },
+        chunked_http = {
+            download = function(url, headers, on_chunk, chunk_size)
                 -- Simulate 4 chunks of data
-                sink("AAAA")
-                sink("BBBB")
-                sink("CCCC")
-                sink("DDDD")
+                on_chunk("AAAA")
+                coroutine.yield()
+                on_chunk("BBBB")
+                coroutine.yield()
+                on_chunk("CCCC")
+                coroutine.yield()
+                on_chunk("DDDD")
+                -- no yield after last chunk — returns directly
                 return true, 200
             end,
         },
@@ -1200,7 +1209,7 @@ run_test("start_chunked_download pumps coroutine and finalizes", function()
     mock.assert_equals(manifest_status, "complete", "manifest should be updated to complete")
 end)
 
-run_test("start_chunked_download yields every 64 chunks", function()
+run_test("start_chunked_download yields on each chunk read", function()
     local chunk_count = 0
     local pumps_needed = 0
 
@@ -1216,10 +1225,16 @@ run_test("start_chunked_download yields every 64 chunks", function()
             end,
         },
         api = {
-            downloadFile = function(item_id, ino, sink, headers)
-                -- Simulate 200 chunks
+            getDownloadUrl = function(item_id, ino)
+                return "https://example.com/api/items/" .. item_id .. "/file/" .. ino .. "?token=test"
+            end,
+        },
+        chunked_http = {
+            download = function(url, headers, on_chunk, chunk_size)
+                -- Simulate 200 chunks, yielding between each
                 for i = 1, 200 do
-                    sink(string.rep("X", 8192))
+                    on_chunk(string.rep("X", 8192))
+                    if i < 200 then coroutine.yield() end
                 end
                 return true, 200
             end,
@@ -1237,10 +1252,10 @@ run_test("start_chunked_download yields every 64 chunks", function()
 
     local handle = downloader.start_chunked_download(entry, file, deps)
 
-    -- Each pump should resume from yield, 200 chunks / 64 per yield = ~3 pumps
+    -- Each pump processes one chunk (chunked_http yields between each)
     while handle:pump() do
         pumps_needed = pumps_needed + 1
-        if pumps_needed > 10 then break end  -- safety limit
+        if pumps_needed > 300 then break end  -- safety limit
     end
 
     mock.assert_equals(pumps_needed >= 2, true,
@@ -1262,10 +1277,17 @@ run_test("start_chunked_download handles cancel", function()
             end,
         },
         api = {
-            downloadFile = function(item_id, ino, sink, headers)
-                for i = 1, 300 do
-                    sink(string.rep("X", 8192))
-                end
+            getDownloadUrl = function(item_id, ino)
+                return "https://example.com/api/items/" .. item_id .. "/file/" .. ino .. "?token=test"
+            end,
+        },
+        chunked_http = {
+            download = function(url, headers, on_chunk, chunk_size)
+                on_chunk(string.rep("X", 8192))
+                coroutine.yield()
+                on_chunk(string.rep("X", 8192))
+                coroutine.yield()
+                on_chunk(string.rep("X", 8192))
                 return true, 200
             end,
         },
@@ -1307,9 +1329,14 @@ run_test("start_chunked_download handles API failure", function()
             end,
         },
         api = {
-            downloadFile = function(item_id, ino, sink, headers)
-                sink("partial")
-                return false, { type = "network", message = "timeout" }
+            getDownloadUrl = function(item_id, ino)
+                return "https://example.com/api/items/" .. item_id .. "/file/" .. ino .. "?token=test"
+            end,
+        },
+        chunked_http = {
+            download = function(url, headers, on_chunk, chunk_size)
+                on_chunk("partial")
+                return false, "timeout"
             end,
         },
         manifest = {
