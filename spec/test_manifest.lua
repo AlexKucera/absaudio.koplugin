@@ -93,6 +93,7 @@ end)
 -- Test: getAllBooks returns all added entries
 -- ============================================================
 run_test("getAllBooks returns all added entries", function()
+    manifest._resetSettings()
     mock_settings = mock.create_lua_settings({})
 
     manifest.init()
@@ -266,6 +267,7 @@ end)
 -- Test: getRecentBook returns book with highest current_time
 -- ============================================================
 run_test("getRecentBook returns book with highest current_time", function()
+    manifest._resetSettings()
     mock_settings = mock.create_lua_settings({})
 
     manifest.init()
@@ -319,6 +321,7 @@ end)
 -- Test: getRecentBook returns nil when no books exist
 -- ============================================================
 run_test("getRecentBook returns nil when no books exist", function()
+    manifest._resetSettings()
     mock_settings = mock.create_lua_settings({})
 
     manifest.init()

@@ -596,8 +596,10 @@ function LibraryBrowserView:onBookTap(item)
                 local ebook_only = data.ebook_only or false
                 self:_onDownloadBook(book_item, ebook_only)
             end,
-            on_delete = function(book_item)
-                self:_onDeleteBook(book_item)
+            on_delete = function(data)
+                local book_item = data.item or data
+                local ebook_only = data.ebook_only or false
+                self:_onDeleteBook(book_item, ebook_only)
             end,
         })
     end
@@ -777,7 +779,11 @@ function LibraryBrowserView:_onDownloadBook(item, ebook_only)
                             local ebook_only = data.ebook_only or false
                             self_ref:_onDownloadBook(book_item, ebook_only)
                         end,
-                        on_delete = function(b) self_ref:_onDeleteBook(b) end,
+                        on_delete = function(data)
+                            local b = data.item or data
+                            local eo = data.ebook_only or false
+                            self_ref:_onDeleteBook(b, eo)
+                        end,
                     })
                 end)
             end
@@ -814,7 +820,11 @@ function LibraryBrowserView:_onDownloadBook(item, ebook_only)
                             local ebook_only = data.ebook_only or false
                             self_ref:_onDownloadBook(book_item, ebook_only)
                         end,
-                            on_delete = function(b) self_ref:_onDeleteBook(b) end,
+                            on_delete = function(data)
+                            local b = data.item or data
+                            local eo = data.ebook_only or false
+                            self_ref:_onDeleteBook(b, eo)
+                        end,
                         })
                     end)
                 end
@@ -867,15 +877,23 @@ end
 ------------------------------------------------------------------------
 -- Delete handler — removes downloaded files and manifest entry
 -- @param item table  ABS item to delete
+-- @param ebook_only boolean  if true, only delete ebook files
 ------------------------------------------------------------------------
-function LibraryBrowserView:_onDeleteBook(item)
-    abs_logger.info("Delete requested: " .. (item.title or item.id))
+function LibraryBrowserView:_onDeleteBook(item, ebook_only)
+    abs_logger.info("Delete requested: " .. (item.title or item.id) .. (ebook_only and " (ebook only)" or ""))
     if not has_manifest then
         UIManager:show(InfoMessage:new{ text = _("Delete not available") })
         return
     end
     manifest.init()
-    -- Gap 4: Delete confirmation dialog
+
+    if ebook_only then
+        -- Delete only ebook files, keep audio
+        self:_onDeleteEbookOnly(item)
+        return
+    end
+
+    -- Delete confirmation for full book
     UIManager:show(ConfirmBox:new{
         text = _("Delete this downloaded book?"),
         ok_text = _("Delete"),
@@ -899,10 +917,68 @@ function LibraryBrowserView:_onDeleteBook(item)
                         item = item,
                         on_download = function(data)
                             local book_item = data.item or data
-                            local ebook_only = data.ebook_only or false
-                            self:_onDownloadBook(book_item, ebook_only)
+                            local eo = data.ebook_only or false
+                            self:_onDownloadBook(book_item, eo)
                         end,
-                        on_delete = function(b) self:_onDeleteBook(b) end,
+                        on_delete = function(data)
+                            local b = data.item or data
+                            local eo = data.ebook_only or false
+                            self:_onDeleteBook(b, eo)
+                        end,
+                    })
+                end)
+            end
+        end,
+    })
+end
+
+------------------------------------------------------------------------
+-- Delete only ebook files, preserving audio
+-- @param item table  ABS item
+------------------------------------------------------------------------
+function LibraryBrowserView:_onDeleteEbookOnly(item)
+    UIManager:show(ConfirmBox:new{
+        text = _("Delete the ebook file? Audio files will be kept."),
+        ok_text = _("Delete Ebook"),
+        ok_callback = function()
+            local entry = manifest.getBook(item.id)
+            if not entry or not entry.files then
+                UIManager:show(InfoMessage:new{ text = _("No ebook found."), timeout = 3 })
+                return
+            end
+            local lfs = _G.lfs or require("lfs")
+
+            -- Delete ebook files from disk and remove from manifest entry
+            local remaining_files = {}
+            for _, f in ipairs(entry.files) do
+                if f.type == "ebook" then
+                    local path = entry.local_dir .. "/" .. f.filename
+                    os.remove(path)
+                else
+                    table.insert(remaining_files, f)
+                end
+            end
+            entry.files = remaining_files
+            manifest.addBook(entry)
+
+            UIManager:show(InfoMessage:new{ text = _("Ebook deleted."), timeout = 3 })
+
+            -- Refresh detail view
+            if has_navigator then
+                nav.pop()
+                UIManager:scheduleIn(0.1, function()
+                    nav.push("detail", {
+                        item = item,
+                        on_download = function(data)
+                            local book_item = data.item or data
+                            local eo = data.ebook_only or false
+                            self:_onDownloadBook(book_item, eo)
+                        end,
+                        on_delete = function(data)
+                            local b = data.item or data
+                            local eo = data.ebook_only or false
+                            self:_onDeleteBook(b, eo)
+                        end,
                     })
                 end)
             end

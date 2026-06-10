@@ -127,11 +127,6 @@ end
 -- @return string|table  result (manifest entry on success, error string on failure)
 ------------------------------------------------------------------------
 function downloader.prepare_download(item, manifest, config)
-    -- Check if already downloaded
-    if manifest.isDownloaded(item.id) then
-        return false, "already_downloaded"
-    end
-
     -- Get audio files from expanded item
     local audio_files = {}
     if item.media and type(item.media.audioFiles) == "table" then
@@ -147,7 +142,15 @@ function downloader.prepare_download(item, manifest, config)
         end
     end
 
+    -- Check for existing manifest entry
+    local existing = manifest.getBook(item.id)
+
+    -- If no audio files in item data, check if already fully downloaded
+    -- (handles the case where the item doesn't carry audioFiles)
     if #audio_files == 0 then
+        if existing and manifest.isDownloaded(item.id) then
+            return false, "already_downloaded"
+        end
         return false, "no_audio_files"
     end
 
@@ -155,7 +158,57 @@ function downloader.prepare_download(item, manifest, config)
     local preferred = config:get("preferred_format") or "m4b"
     local filtered = downloader.filter_audio_files(audio_files, preferred)
 
-    -- Build manifest entry
+    if existing then
+        -- Check if all AUDIO files are already complete
+        -- (files without 'type' field default to 'audio' for backward compat)
+        local all_audio_complete = false
+        if existing.files then
+            all_audio_complete = true
+            local has_audio = false
+            for _, f in ipairs(existing.files) do
+                local is_audio = (f.type == nil or f.type == "audio")
+                if is_audio then
+                    has_audio = true
+                    if f.status ~= "complete" then
+                        all_audio_complete = false
+                        break
+                    end
+                end
+            end
+            if not has_audio then all_audio_complete = false end
+        end
+        if all_audio_complete then
+            return false, "already_downloaded"
+        end
+
+        -- Merge audio files into existing entry
+        for _, f in ipairs(filtered) do
+            local sanitized = downloader.sanitize_filename(f.filename)
+            local already_tracked = false
+            if existing.files then
+                for _, ef in ipairs(existing.files) do
+                    if ef.ino == f.ino then
+                        already_tracked = true
+                        break
+                    end
+                end
+            end
+            if not already_tracked then
+                if not existing.files then existing.files = {} end
+                table.insert(existing.files, {
+                    filename = sanitized,
+                    ino = f.ino,
+                    size = f.size,
+                    type = "audio",
+                    status = "pending",
+                })
+            end
+        end
+        manifest.addBook(existing)  -- persist merged entry
+        return true, existing
+    end
+
+    -- No existing entry — create fresh audio manifest entry
     local title = (item.media and item.media.metadata and item.media.metadata.title) or "Unknown Title"
     local author = (item.media and item.media.metadata and item.media.metadata.authorName) or "Unknown Author"
     local download_dir = config:get("download_dir") or "/tmp/audiobooks"
@@ -345,6 +398,38 @@ function downloader.prepare_ebook_download(item, manifest, config)
         return false, "no_ebook_files"
     end
 
+    -- Check for existing manifest entry (audio already downloaded)
+    local existing = manifest.getBook(item.id)
+    if existing then
+        -- Merge ebook files into existing entry
+        for _, f in ipairs(ebook_files) do
+            local sanitized = downloader.sanitize_filename(f.filename)
+            -- Skip if this ebook file already tracked
+            local already_tracked = false
+            if existing.files then
+                for _, ef in ipairs(existing.files) do
+                    if ef.ino == f.ino then
+                        already_tracked = true
+                        break
+                    end
+                end
+            end
+            if not already_tracked then
+                if not existing.files then existing.files = {} end
+                table.insert(existing.files, {
+                    filename = sanitized,
+                    ino = f.ino,
+                    size = f.size,
+                    type = "ebook",
+                    status = "pending",
+                })
+            end
+        end
+        manifest.addBook(existing)  -- persist merged entry
+        return true, existing
+    end
+
+    -- No existing entry — create fresh ebook-only manifest entry
     local title = (item.media and item.media.metadata and item.media.metadata.title) or "Unknown Title"
     local author = (item.media and item.media.metadata and item.media.metadata.authorName) or "Unknown Author"
     local download_dir = config:get("download_dir") or "/tmp/audiobooks"
@@ -394,7 +479,7 @@ function downloader.reconcile_manifest(manifest, fs)
             for _, file in ipairs(book.files) do
                 if file.status == "complete" then
                     local path = book.local_dir .. "/" .. file.filename
-                    local actual_size = fs:get_file_size(path)
+                    local actual_size = fs.get_file_size(path)
                     -- If file doesn't exist or size doesn't match, mark as partial
                     if actual_size == nil or actual_size ~= file.size then
                         manifest.updateFileStatus(book.abs_item_id, file.filename, "partial")

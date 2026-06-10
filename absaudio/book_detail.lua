@@ -364,30 +364,66 @@ end
 
 ------------------------------------------------------------------------
 -- Download status badge and action buttons
--- Three states:
---   1. All files complete → ✓ Downloaded + Delete button
---   2. Some files incomplete → ⚠ Incomplete download + Resume button + Delete button
---   3. Not in manifest → Not downloaded + Download button
+-- Per-type status tracking:
+--   Audio and ebook have independent download states.
+--   Shows status badge + action buttons per type.
 ------------------------------------------------------------------------
 function BookDetailView:_addDownloadStatus()
     local item_id = self.item.id
-    local has_book = false
-    local is_complete = false
-    local has_incomplete = false
+    local audio_state = "none"  -- "none", "complete", "incomplete", "partial"
+    local ebook_state = "none"
 
     if has_manifest then
         local book = manifest.getBook(item_id)
-        if book then
-            has_book = true
-            is_complete = manifest.isDownloaded(item_id)
-            has_incomplete = manifest.hasIncompleteFiles(item_id)
+        if book and book.files then
+            for _, f in ipairs(book.files) do
+                local ftype = f.type or "audio"  -- backward compat
+                if ftype == "audio" then
+                    if audio_state == "none" then audio_state = f.status or "pending" end
+                    if f.status ~= "complete" then audio_state = "incomplete" end
+                elseif ftype == "ebook" then
+                    if f.status == "complete" then ebook_state = "complete" end
+                    if f.status == "partial" or f.status == "pending" then ebook_state = "incomplete" end
+                end
+            end
+            -- Refine audio_state
+            if audio_state ~= "none" and audio_state ~= "incomplete" then
+                audio_state = "complete"
+            end
         end
     end
 
-    if has_book and is_complete then
-        -- State 1: Fully downloaded
+    -- Check if there ARE audio files (from item data or manifest)
+    -- Show audio status if: (1) item has audioFiles, OR (2) manifest has audio files
+    -- If neither but we're on a detail page for an audiobook, show "not downloaded" state
+    local has_audio_files = (self.item.audioFiles and #self.item.audioFiles > 0)
+        or (self.item.media and type(self.item.media.audioFiles) == "table" and #self.item.media.audioFiles > 0)
+        or audio_state ~= "none"  -- manifest has audio-type files
+
+    -- If item has duration (audiobook) but no audioFiles in data,
+    -- still show the audio download section
+    if not has_audio_files and (self.item.media and self.item.media.duration
+        and self.item.media.duration > 0) then
+        has_audio_files = true
+        audio_state = "none"  -- not downloaded
+    end
+
+    -- Audio download status badge
+    if has_audio_files then
+        self:_addAudioDownloadStatus(audio_state)
+    end
+end
+
+------------------------------------------------------------------------
+-- Audio download status sub-section
+------------------------------------------------------------------------
+function BookDetailView:_addAudioDownloadStatus(audio_state)
+    local item_id = self.item.id
+
+    if audio_state == "complete" then
+        -- Audio fully downloaded
         local badge = TextWidget:new{
-            text = "✓ " .. _("Downloaded"),
+            text = "✓ " .. _("Audio downloaded"),
             face = Font:getFace("cfont", 14),
             fgcolor = Blitbuffer.COLOR_DARK_GREEN,
         }
@@ -397,7 +433,7 @@ function BookDetailView:_addDownloadStatus()
         if self.on_delete then
             table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
             local delete_btn = TextWidget:new{
-                text = _("🗑 Delete"),
+                text = _("🗑 Delete audio"),
                 face = Font:getFace("cfont", 16),
                 fgcolor = Blitbuffer.COLOR_DARK_GRAY,
             }
@@ -416,16 +452,16 @@ function BookDetailView:_addDownloadStatus()
             local item = self.item
             local on_delete_cb = self.on_delete
             function tap_container:onTapDelete()
-                if on_delete_cb then on_delete_cb(item) end
+                if on_delete_cb then on_delete_cb({ item = item, ebook_only = false }) end
                 return true
             end
             tap_container[1] = delete_btn
             table.insert(self.content_group, tap_container)
         end
-    elseif has_book and has_incomplete then
-        -- State 2: Incomplete download
+    elseif audio_state == "incomplete" then
+        -- Audio incomplete
         local badge = TextWidget:new{
-            text = "⚠ " .. _("Incomplete download"),
+            text = "⚠ " .. _("Audio download incomplete"),
             face = Font:getFace("cfont", 14),
             fgcolor = Blitbuffer.COLOR_DARK_GRAY,
         }
@@ -435,7 +471,7 @@ function BookDetailView:_addDownloadStatus()
         if self.on_download then
             table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
             local resume_btn = TextWidget:new{
-                text = _("⬇ Resume"),
+                text = _("⬇ Resume audio"),
                 face = Font:getFace("cfont", 16),
                 fgcolor = Blitbuffer.COLOR_BLUE,
             }
@@ -464,7 +500,7 @@ function BookDetailView:_addDownloadStatus()
         if self.on_delete then
             table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
             local delete_btn = TextWidget:new{
-                text = _("🗑 Delete"),
+                text = _("🗑 Delete audio"),
                 face = Font:getFace("cfont", 16),
                 fgcolor = Blitbuffer.COLOR_DARK_GRAY,
             }
@@ -483,16 +519,16 @@ function BookDetailView:_addDownloadStatus()
             local item = self.item
             local on_delete_cb = self.on_delete
             function tap_container:onTapDelete()
-                if on_delete_cb then on_delete_cb(item) end
+                if on_delete_cb then on_delete_cb({ item = item, ebook_only = false }) end
                 return true
             end
             tap_container[1] = delete_btn
             table.insert(self.content_group, tap_container)
         end
     else
-        -- State 3: Not downloaded
+        -- Audio not downloaded
         local badge = TextWidget:new{
-            text = _("Not downloaded"),
+            text = _("Audio not downloaded"),
             face = Font:getFace("cfont", 14),
             fgcolor = Blitbuffer.COLOR_DARK_GRAY,
         }
@@ -502,7 +538,7 @@ function BookDetailView:_addDownloadStatus()
         if self.on_download then
             table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
             local download_btn = TextWidget:new{
-                text = _("⬇ Download"),
+                text = _("⬇ Download audio"),
                 face = Font:getFace("cfont", 16),
                 fgcolor = Blitbuffer.COLOR_BLUE,
             }
@@ -518,13 +554,10 @@ function BookDetailView:_addDownloadStatus()
                     range = tap_container.dimen,
                 },
             }
-            tap_container.detail_ref = self.detail_ref
             local item = self.item
             local on_download_cb = self.on_download
             function tap_container:onTapDownload()
-                if on_download_cb then
-                    on_download_cb(item)
-                end
+                if on_download_cb then on_download_cb(item) end
                 return true
             end
             tap_container[1] = download_btn
@@ -534,6 +567,7 @@ function BookDetailView:_addDownloadStatus()
 
     table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
 end
+
 
 ------------------------------------------------------------------------
 -- Section header helper
@@ -607,12 +641,41 @@ end
 function BookDetailView:_addEbookFiles(ebook_files)
     self:_addSectionHeader(_("Ebook / PDF Files"))
 
+    -- Check ebook download status from manifest
+    local ebook_status_map = {}  -- ino -> status
+    if has_manifest then
+        local book = manifest.getBook(self.item.id)
+        if book and book.files then
+            for _, f in ipairs(book.files) do
+                if f.type == "ebook" then
+                    ebook_status_map[f.ino] = f.status
+                end
+            end
+        end
+    end
+
+    local all_ebooks_complete = true
+    local any_ebook_incomplete = false
+
     for _, file in ipairs(ebook_files) do
         local format_str = string.upper(file.format or "???")
-        local file_text = string.format("  %s  %s  %s",
+        local status = ebook_status_map[file.ino]
+        local status_str = ""
+        if status == "complete" then
+            status_str = " ✓"
+        elseif status == "partial" then
+            status_str = " ⚠"
+            any_ebook_incomplete = true
+            all_ebooks_complete = false
+        else
+            all_ebooks_complete = false
+        end
+
+        local file_text = string.format("  %s  %s  %s%s",
             format_str,
             file.filename or _("Unknown file"),
-            widget_helpers.format_file_size(file.size))
+            widget_helpers.format_file_size(file.size),
+            status_str)
 
         local file_widget = TextWidget:new{
             text = file_text,
@@ -624,11 +687,42 @@ function BookDetailView:_addEbookFiles(ebook_files)
         table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
     end
 
-    -- Gap 5: Ebook download button
-    if self.on_download then
+    -- Ebook download/delete buttons
+    if all_ebooks_complete and not any_ebook_incomplete then
+        -- All ebooks downloaded — show delete button
+        if self.on_delete then
+            local delete_btn = TextWidget:new{
+                text = _("🗑 Delete ebook"),
+                face = Font:getFace("cfont", 16),
+                fgcolor = Blitbuffer.COLOR_DARK_GRAY,
+            }
+            local tap_container = InputContainer:new{
+                dimen = Geom:new{
+                    w = self.content_width,
+                    h = delete_btn:getSize().h + Size.padding.default,
+                },
+            }
+            tap_container.ges_events.TapDeleteEbook = {
+                GestureRange:new{
+                    ges = "tap",
+                    range = tap_container.dimen,
+                },
+            }
+            local item = self.item
+            local on_delete_cb = self.on_delete
+            function tap_container:onTapDeleteEbook()
+                if on_delete_cb then on_delete_cb({ item = item, ebook_only = true }) end
+                return true
+            end
+            tap_container[1] = delete_btn
+            table.insert(self.content_group, tap_container)
+        end
+    elseif self.on_download then
+        -- Not all ebooks downloaded — show download/resume button
         table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
+        local btn_label = any_ebook_incomplete and _("⬇ Resume ebook") or _("⬇ Download Ebook")
         local ebook_btn = TextWidget:new{
-            text = _("\226\175\135 Download Ebook"),
+            text = btn_label,
             face = Font:getFace("cfont", 16),
             fgcolor = Blitbuffer.COLOR_BLUE,
         }

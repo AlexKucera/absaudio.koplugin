@@ -45,6 +45,9 @@ run_test("sanitize_filename strips colons", function()
     mock.assert_equals(downloader.sanitize_filename("Book: Title.m4b"), "Book_ Title.m4b", "colon → underscore")
 end)
 
+-- Summary
+print(string.format("\n%d passed, %d failed", passed, failed))
+
 run_test("sanitize_filename strips forward slashes", function()
     mock.assert_equals(downloader.sanitize_filename("Part 1/File.m4b"), "Part 1_File.m4b", "slash → underscore")
 end)
@@ -1447,10 +1450,10 @@ run_test("prepare_download resets partial files to pending (resume bug)", functi
     local ok, result = downloader.prepare_download(item, mock_manifest, mock_config)
     assert(ok, "prepare_download should succeed for partial book")
 
-    -- BUG: prepare_download resets file status from "partial" to "pending"
-    -- This means execute_download will NOT resume — it will start from zero
-    mock.assert_equals(result.files[1].status, "pending",
-        "BUG CONFIRMED: prepare_download resets partial→pending, destroying resume info")
+    -- With the merge fix, prepare_download preserves partial status
+    -- instead of resetting to pending. This means resume works correctly.
+    mock.assert_equals(result.files[1].status, "partial",
+        "partial status should be preserved for resume")
 end)
 
 run_test("start_chunked_download opens 'wb' when status is pending (not partial)", function()
@@ -1665,8 +1668,215 @@ run_test("E2E resume: cancel then resume preserves partial status", function()
         "E2E: Range header should start from existing file size")
 end)
 -- ============================================================
--- Summary
+-- Summary (moved to end of file after all tests)
+
 -- ============================================================
+-- Slice 11: Ebook download should not overwrite existing audio entry
+-- ============================================================
+
+run_test("prepare_ebook_download merges into existing audio manifest entry", function()
+    -- Simulate: audiobook already downloaded, then ebook download requested
+    local stored = {}
+    local mock_manifest = {
+        getBook = function(id) return stored[id] end,
+        addBook = function(entry) stored[entry.abs_item_id] = entry end,
+        isDownloaded = function(id)
+            local b = stored[id]
+            if not b or not b.files then return false end
+            for _, f in ipairs(b.files) do
+                if f.status ~= "complete" then return false end
+            end
+            return true
+        end,
+    }
+    local mock_config = {
+        get = function(key)
+            if key == "download_dir" then return "/tmp/audiobooks" end
+            if key == "preferred_format" then return "m4b" end
+            return nil
+        end,
+    }
+
+    -- Step 1: Download audiobook first
+    local item = {
+        id = "li_dual1",
+        media = {
+            metadata = { title = "Dual Book", authorName = "Author" },
+            duration = 3600,
+            audioFiles = {
+                { ino = "100", metadata = { filename = "book.m4b", ext = ".m4b", size = 10000 }, duration = 3600 },
+            },
+            ebookFile = { ino = "200", metadata = { filename = "book.epub", ext = ".epub", size = 5000 } },
+        },
+    }
+
+    local ok1, audio_entry = downloader.prepare_download(item, mock_manifest, mock_config)
+    assert(ok1, "audio prepare should succeed")
+    -- Simulate download completing
+    audio_entry.files[1].status = "complete"
+    mock_manifest.addBook(audio_entry)
+
+    -- Verify audio is tracked
+    local book = mock_manifest.getBook("li_dual1")
+    assert(book ~= nil, "manifest should have the book")
+    mock.assert_equals(#book.files, 1)
+    mock.assert_equals(book.files[1].type, "audio")
+    mock.assert_equals(book.files[1].status, "complete")
+
+    -- Step 2: Now download ebook for the same item
+    local ok2, ebook_result = downloader.prepare_ebook_download(item, mock_manifest, mock_config)
+    assert(ok2, "ebook prepare should succeed")
+
+    -- BUG CHECK: audio files must NOT be lost
+    book = mock_manifest.getBook("li_dual1")
+    assert(book ~= nil, "manifest should still have the book")
+    local audio_count = 0
+    local ebook_count = 0
+    for _, f in ipairs(book.files) do
+        if f.type == "audio" then audio_count = audio_count + 1 end
+        if f.type == "ebook" then ebook_count = ebook_count + 1 end
+    end
+    mock.assert_equals(audio_count, 1, "audio file should still be present")
+    mock.assert_equals(ebook_count, 1, "ebook file should be added")
+
+    -- Audio status should still be complete
+    mock.assert_equals(book.files[1].status, "complete", "audio status preserved")
+end)
+
+-- ============================================================
+-- Slice 12: Cancel ebook download preserves audio status
+-- ============================================================
+
+run_test("cancel ebook download preserves audio complete status", function()
+    local stored = {}
+    local mock_manifest = {
+        getBook = function(id) return stored[id] end,
+        addBook = function(entry) stored[entry.abs_item_id] = entry end,
+        isDownloaded = function(id)
+            local b = stored[id]
+            if not b or not b.files then return false end
+            for _, f in ipairs(b.files) do
+                if f.status ~= "complete" then return false end
+            end
+            return true
+        end,
+    }
+    local mock_config = {
+        get = function(key)
+            if key == "download_dir" then return "/tmp/audiobooks" end
+            if key == "preferred_format" then return "m4b" end
+            return nil
+        end,
+    }
+
+    -- Step 1: Download audiobook first
+    local item = {
+        id = "li_cancel1",
+        media = {
+            metadata = { title = "Cancel Test", authorName = "Author" },
+            duration = 3600,
+            audioFiles = {
+                { ino = "300", metadata = { filename = "book.m4b", ext = ".m4b", size = 10000 }, duration = 3600 },
+            },
+            ebookFile = { ino = "400", metadata = { filename = "book.epub", ext = ".epub", size = 5000 } },
+        },
+    }
+
+    local ok1, audio_entry = downloader.prepare_download(item, mock_manifest, mock_config)
+    assert(ok1, "audio prepare should succeed")
+    audio_entry.files[1].status = "complete"
+    mock_manifest.addBook(audio_entry)
+
+    -- Step 2: Start ebook download
+    local ok2, ebook_result = downloader.prepare_ebook_download(item, mock_manifest, mock_config)
+    assert(ok2, "ebook prepare should succeed")
+
+    -- Step 3: Simulate cancel — ebook file stays partial
+    local book = mock_manifest.getBook("li_cancel1")
+    for _, f in ipairs(book.files) do
+        if f.type == "ebook" then
+            f.status = "partial"
+        end
+    end
+
+    -- Audio should still be complete, ebook partial
+    local audio_status = nil
+    local ebook_status = nil
+    for _, f in ipairs(book.files) do
+        if f.type == "audio" then audio_status = f.status end
+        if f.type == "ebook" then ebook_status = f.status end
+    end
+    mock.assert_equals(audio_status, "complete", "audio should remain complete after ebook cancel")
+    mock.assert_equals(ebook_status, "partial", "ebook should be partial after cancel")
+end)
+
+-- ============================================================
+-- Slice 13: Prepare audio after ebook preserves ebook
+-- ============================================================
+
+run_test("prepare_download merges audio into existing ebook-only entry", function()
+    local stored = {}
+    local mock_manifest = {
+        getBook = function(id) return stored[id] end,
+        addBook = function(entry) stored[entry.abs_item_id] = entry end,
+        isDownloaded = function(id)
+            local b = stored[id]
+            if not b or not b.files then return false end
+            for _, f in ipairs(b.files) do
+                if f.status ~= "complete" then return false end
+            end
+            return true
+        end,
+    }
+    local mock_config = {
+        get = function(key)
+            if key == "download_dir" then return "/tmp/audiobooks" end
+            if key == "preferred_format" then return "m4b" end
+            return nil
+        end,
+    }
+
+    -- Step 1: Download ebook first
+    local item = {
+        id = "li_reverse1",
+        media = {
+            metadata = { title = "Reverse Test", authorName = "Author" },
+            duration = 3600,
+            audioFiles = {
+                { ino = "500", metadata = { filename = "book.m4b", ext = ".m4b", size = 10000 }, duration = 3600 },
+            },
+            ebookFile = { ino = "600", metadata = { filename = "book.epub", ext = ".epub", size = 5000 } },
+        },
+    }
+
+    local ok1, ebook_entry = downloader.prepare_ebook_download(item, mock_manifest, mock_config)
+    assert(ok1, "ebook prepare should succeed")
+    ebook_entry.files[1].status = "complete"
+    mock_manifest.addBook(ebook_entry)
+
+    -- Step 2: Download audio for same item
+    local ok2, audio_result = downloader.prepare_download(item, mock_manifest, mock_config)
+    assert(ok2, "audio prepare should succeed")
+
+    -- Both should be tracked
+    local book = mock_manifest.getBook("li_reverse1")
+    local audio_count = 0
+    local ebook_count = 0
+    for _, f in ipairs(book.files) do
+        if f.type == "audio" then audio_count = audio_count + 1 end
+        if f.type == "ebook" then ebook_count = ebook_count + 1 end
+    end
+    mock.assert_equals(ebook_count, 1, "ebook file should still be present")
+    mock.assert_equals(audio_count, 1, "audio file should be added")
+    -- Ebook status preserved
+    for _, f in ipairs(book.files) do
+        if f.type == "ebook" then
+            mock.assert_equals(f.status, "complete", "ebook status preserved")
+        end
+    end
+    end)
+
+-- Summary
 print(string.format("\n%d passed, %d failed", passed, failed))
 
 if #errors > 0 then

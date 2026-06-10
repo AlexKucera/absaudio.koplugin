@@ -51,6 +51,8 @@ They capture what was done, decisions & rationale, gotchas & fixes, and next ste
 | 2026-06-09 | issue | [issue20-main-lua-navigator-tests_log.md](docs/devlog/20260609-issue20-main-lua-navigator-tests_log.md) | Created `spec/test_main.lua` with 10 tests; navigator registration, onOpenDashboard wiring, dispatcher routing, first-run behavior; 196 total pass |
 
 <!-- write-log: session-log-index -->
+
+| 2026-06-10 | issue | [fix-ebook-audio-download-status-independent_log.md](docs/devlog/20260610-fix-ebook-audio-download-status-independent_log.md) | Fixed ebook download overwriting audio manifest; per-type status tracking in book detail; fixed reconcile_manifest `fs:` crash; 306 tests pass |
 | 2026-06-09 | issue | [issue05-download-pipeline-tdd-and-ui-wiring_log.md](docs/devlog/20260609-issue05-download-pipeline-tdd-and-ui-wiring_log.md) | Created `absaudio/downloader.lua` with 52 tests across 11 TDD slices; added 5 manifest helpers; rewrote `_addDownloadStatus` with 3-state logic; wired download/delete buttons in library_browser; 262 total pass |
 
 | Date | Type | File | Summary |

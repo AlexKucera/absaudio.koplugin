@@ -685,8 +685,8 @@ run_test("_addDownloadStatus shows ✓ Downloaded when all files complete", func
 
     local view = shown_widgets[#shown_widgets]
     mock.assert_equals(view ~= nil, true, "should have created a view")
-    mock.assert_equals(find_text_in_view(view, "Downloaded"), true, "should show Downloaded badge")
-    mock.assert_equals(find_text_in_view(view, "Delete"), true, "should show Delete button when downloaded")
+    mock.assert_equals(find_text_in_view(view, "Audio downloaded"), true, "should show Audio downloaded badge")
+    mock.assert_equals(find_text_in_view(view, "Delete audio"), true, "should show Delete button when downloaded")
 
     package.loaded["ui/uimanager"].show = orig_show
 end)
@@ -746,7 +746,7 @@ run_test("_addDownloadStatus shows Download button when not in manifest", functi
 
     local view = shown_widgets[#shown_widgets]
     mock.assert_equals(view ~= nil, true, "should have created a view")
-    mock.assert_equals(find_text_in_view(view, "Download"), true, "should show Download button")
+    mock.assert_equals(find_text_in_view(view, "Download audio"), true, "should show Download audio button")
 
     package.loaded["ui/uimanager"].show = orig_show
 end)
@@ -862,4 +862,19 @@ if #errors > 0 then
     end
     os.exit(1)
 end
+-- ============================================================
+-- Ebook status tests: per-type download status
+-- ============================================================
+
+-- Ebook per-type status tested in test_downloader.lua (slices 11-13)
+-- Book detail UI tests for ebook status covered by existing _addEbookFiles tests
+
 print(string.format("\n%d passed, %d failed", passed, failed))
+
+if #errors > 0 then
+    print("\nFailures:")
+    for _, e in ipairs(errors) do
+        print("  " .. e.name .. ": " .. tostring(e.err))
+    end
+    os.exit(1)
+end

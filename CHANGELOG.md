@@ -13,6 +13,8 @@ All notable changes to this project will be documented in this file. The format 
 
 ### fix
 - **download:** fix ebook download never executing — the ebook branch in `_onDownloadBook` was a TODO stub that returned early after showing "Ebook download prepared"; unified ebook and audio paths into a single shared pipeline so ebook files actually download to disk
+- **download:** fix ebook download overwriting audiobook manifest entry — `prepare_download` and `prepare_ebook_download` now merge files into existing entries instead of replacing them; audio and ebook download status tracked independently with per-type badges and action buttons
+- **download:** fix `lfs.attributes` crash on plugin init — `reconcile_manifest` used Lua `:` method call on a plain function table, passing the table as the first arg to `lfs.attributes`
 - **download:** fix cancel button hanging emulator until download completes — `scheduleIn(0, pump)` made each pump "due now" so UIManager's task drain loop never yielded to input event processing; changed to `scheduleIn(0.05)` (50ms) so cancel taps are dispatched between chunks
 - **book-detail:** fix ebook file detection — ABS API returns `media.ebookFile` (singular object), not `ebookFiles` (plural array); convert to internal format with fallback
 - **downloader:** fix `get_ebook_files` to check `media.ebookFile` first (ABS format), falling back to `media.ebooks`
