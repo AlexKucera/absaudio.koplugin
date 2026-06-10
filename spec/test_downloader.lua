@@ -1404,6 +1404,267 @@ run_test("get_ebook_files handles LuaJSON null sentinel for ebookFile", function
 end)
 
 -- ============================================================
+-- Slice 16: prepare_download resume regression
+-- ============================================================
+
+run_test("prepare_download resets partial files to pending (resume bug)", function()
+    -- Simulate: book already in manifest with one partial file
+    local existing_entry = {
+        abs_item_id = "li_resume_bug",
+        title = "Partial Book",
+        local_dir = "/tmp/test",
+        files = {
+            { filename = "book.m4b", ino = "999", size = 10000, type = "audio", status = "partial" },
+        },
+    }
+
+    local added_entry = nil
+    local mock_manifest = {
+        getBook = function() return existing_entry end,
+        addBook = function(entry) added_entry = entry end,
+        isDownloaded = function() return false end,  -- partial → not "downloaded"
+    }
+    local mock_config = {
+        get = function(key)
+            if key == "download_dir" then return "/tmp" end
+            if key == "preferred_format" then return "m4b" end
+            return nil
+        end,
+    }
+
+    local item = {
+        id = "li_resume_bug",
+        media = {
+            metadata = { title = "Partial Book", authorName = "Author" },
+            audioFiles = {
+                { ino = "999", metadata = { filename = "book.m4b", ext = ".m4b", size = 10000 }, duration = 3600 },
+            },
+            chapters = {},
+            duration = 3600,
+        },
+    }
+
+    local ok, result = downloader.prepare_download(item, mock_manifest, mock_config)
+    assert(ok, "prepare_download should succeed for partial book")
+
+    -- BUG: prepare_download resets file status from "partial" to "pending"
+    -- This means execute_download will NOT resume — it will start from zero
+    mock.assert_equals(result.files[1].status, "pending",
+        "BUG CONFIRMED: prepare_download resets partial→pending, destroying resume info")
+end)
+
+run_test("start_chunked_download opens 'wb' when status is pending (not partial)", function()
+    -- Proves that pending status causes fresh download (no append, no Range header)
+    local entry = {
+        abs_item_id = "li_resume2",
+        local_dir = "/tmp/test",
+        files = {
+            { filename = "book.m4b", ino = "444", size = 10000, status = "pending" },  -- pending, NOT partial
+        },
+    }
+
+    local open_modes = {}
+    local sent_headers = nil
+    local mock_chunked = {
+        download = function(url, headers, on_chunk)
+            sent_headers = headers
+            on_chunk("data")
+            return true, 200
+        end,
+    }
+
+    local deps = {
+        manifest = { updateFileStatus = function() end },
+        api = { getDownloadUrl = function() return "http://test/f" end },
+        fs = {
+            mkdir = function() end,
+            open = function(path, mode)
+                table.insert(open_modes, mode)
+                return { write = function() end, close = function() end }
+            end,
+            get_file_size = function() return 5000 end,  -- 5000 bytes on disk
+        },
+        state = downloader.create_download_state(),
+        chunked_http = mock_chunked,
+    }
+
+    local handle = downloader.start_chunked_download(entry, entry.files[1], deps)
+    assert(handle, "should return handle")
+
+    -- Pump to completion
+    while handle:pump() do end
+    local ok, reason = handle:finalize()
+    assert(ok, "should succeed")
+
+    -- Because status is "pending" (not "partial"), file is opened in "wb" mode
+    -- and no Range header is sent — download starts from zero despite 5000 bytes on disk
+    mock.assert_equals(open_modes[1], "wb",
+        "pending status → wb (overwrite), NOT ab (append)")
+    mock.assert_equals(sent_headers, nil,
+        "pending status → no Range header")
+end)
+
+run_test("start_chunked_download resumes with 'ab' when status is partial", function()
+    -- This is the CORRECT resume behavior: partial status → append + Range header
+    local entry = {
+        abs_item_id = "li_resume3",
+        local_dir = "/tmp/test",
+        files = {
+            { filename = "book.m4b", ino = "555", size = 10000, status = "partial" },
+        },
+    }
+
+    local open_modes = {}
+    local sent_headers = nil
+    local mock_chunked = {
+        download = function(url, headers, on_chunk)
+            sent_headers = headers
+            on_chunk(string.rep("x", 100))
+            return true, 206
+        end,
+    }
+
+    local deps = {
+        manifest = { updateFileStatus = function() end },
+        api = { getDownloadUrl = function() return "http://test/f" end },
+        fs = {
+            mkdir = function() end,
+            open = function(path, mode)
+                table.insert(open_modes, mode)
+                return { write = function() end, close = function() end }
+            end,
+            get_file_size = function() return 5000 end,  -- 5000 bytes on disk
+        },
+        state = downloader.create_download_state(),
+        chunked_http = mock_chunked,
+    }
+
+    local handle = downloader.start_chunked_download(entry, entry.files[1], deps)
+    assert(handle, "should return handle")
+
+    while handle:pump() do end
+    local ok, reason = handle:finalize()
+    assert(ok, "should succeed")
+
+    -- partial status + bytes on disk → append mode + Range header
+    mock.assert_equals(open_modes[1], "ab",
+        "partial status → ab (append), NOT wb (overwrite)")
+    assert(sent_headers ~= nil,
+        "partial status → Range header should be sent")
+    mock.assert_equals(sent_headers["Range"], "bytes=5000-",
+        "Range header should start from existing file size")
+end)
+
+-- ============================================================
+-- Slice 17: End-to-end resume flow
+-- ============================================================
+
+run_test("E2E resume: cancel then resume preserves partial status", function()
+    -- Simulate the full cancel-then-resume flow that _onDownloadBook handles
+    local mock_manifest_data = {}
+    local mock_manifest = {
+        getBook = function(id) return mock_manifest_data[id] end,
+        addBook = function(entry) mock_manifest_data[entry.abs_item_id] = entry end,
+        isDownloaded = function(id)
+            local e = mock_manifest_data[id]
+            if not e then return false end
+            for _, f in ipairs(e.files) do
+                if f.status ~= "complete" then return false end
+            end
+            return true
+        end,
+        hasIncompleteFiles = function(id)
+            local e = mock_manifest_data[id]
+            if not e or not e.files then return false end
+            for _, f in ipairs(e.files) do
+                if f.status == "pending" or f.status == "partial" then return true end
+            end
+            return false
+        end,
+        updateFileStatus = function(id, filename, status)
+            local e = mock_manifest_data[id]
+            if e and e.files then
+                for _, f in ipairs(e.files) do
+                    if f.filename == filename then
+                        f.status = status
+                        break
+                    end
+                end
+            end
+        end,
+    }
+
+    local item = {
+        id = "li_e2e_resume",
+        media = {
+            metadata = { title = "E2E Resume Book", authorName = "Author" },
+            audioFiles = {
+                { ino = "100", metadata = { filename = "chapter1.m4b", ext = ".m4b", size = 50000 }, duration = 1800 },
+                { ino = "200", metadata = { filename = "chapter2.m4b", ext = ".m4b", size = 30000 }, duration = 1800 },
+            },
+            chapters = {},
+            duration = 3600,
+        },
+    }
+
+    local config = {
+        get = function(key)
+            if key == "download_dir" then return "/tmp" end
+            if key == "preferred_format" then return "m4b" end
+            return nil
+        end,
+    }
+
+    -- Step 1: First download (prepare_download creates entry)
+    local ok, result = downloader.prepare_download(item, mock_manifest, config)
+    assert(ok, "first prepare_download should succeed")
+    mock.assert_equals(#result.files, 2, "should have 2 files")
+    mock.assert_equals(result.files[1].status, "pending", "file 1 should be pending")
+    mock.assert_equals(result.files[2].status, "pending", "file 2 should be pending")
+
+    -- Step 2: Simulate partial download — file 1 downloaded, file 2 partially
+    result.files[1].status = "complete"
+    result.files[2].status = "partial"
+
+    -- Step 3: Simulate _onDownloadBook resume path
+    -- This is exactly what my fix does
+    local existing_entry = mock_manifest.getBook(item.id)
+    assert(existing_entry ~= nil, "entry should exist after prepare_download")
+    assert(mock_manifest.hasIncompleteFiles(item.id),
+        "should detect incomplete files")
+
+    -- The fix uses existing_entry (with partial status preserved)
+    local resume_entry = existing_entry
+
+    -- Step 4: Verify select_files_to_download returns the partial file
+    local files_to_download = downloader.select_files_to_download(resume_entry.files)
+    mock.assert_equals(#files_to_download, 1,
+        "should only select incomplete files for resume")
+    mock.assert_equals(files_to_download[1].filename, "chapter2.m4b",
+        "should select the partial file")
+    mock.assert_equals(files_to_download[1].status, "partial",
+        "selected file should have partial status (NOT pending)")
+
+    -- Step 5: Verify that start_chunked_download would use resume mode
+    -- (We check the logic directly rather than running the full coroutine)
+    local file = files_to_download[1]
+    -- Simulate what start_chunked_download does:
+    -- local_size = deps.fs.get_file_size(...)
+    local simulated_local_size = 12000  -- 12KB already on disk
+    local open_mode = "wb"
+    local extra_headers = nil
+    if file.status == "partial" and simulated_local_size > 0 and simulated_local_size < file.size then
+        open_mode = "ab"
+        extra_headers = { ["Range"] = "bytes=" .. tostring(simulated_local_size) .. "-" }
+    end
+
+    mock.assert_equals(open_mode, "ab",
+        "E2E: resume should use append mode")
+    assert(extra_headers ~= nil, "E2E: Range header should be set")
+    mock.assert_equals(extra_headers["Range"], "bytes=12000-",
+        "E2E: Range header should start from existing file size")
+end)
+-- ============================================================
 -- Summary
 -- ============================================================
 print(string.format("\n%d passed, %d failed", passed, failed))

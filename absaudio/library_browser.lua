@@ -635,31 +635,63 @@ function LibraryBrowserView:_onDownloadBook(item, ebook_only)
         return
     end
 
-    local ok, result = downloader.prepare_download(item, manifest, config)
-    if not ok then
-        if result == "already_downloaded" then
-            -- Gap 3: Re-download prompt
-            UIManager:show(ConfirmBox:new{
-                text = _("Already downloaded. Re-download?"),
-                ok_text = _("Re-download"),
-                ok_callback = function()
-                    local lfs = _G.lfs or require("lfs")
-                    local fs = {
-                        delete_file = function(path) os.remove(path) end,
-                        delete_dir = function(path) lfs.rmdir(path) end,
-                    }
-                    downloader.delete_book(item.id, manifest, fs)
-                    self:_onDownloadBook(item)
-                end,
-            })
-        else
-            UIManager:show(InfoMessage:new{ text = _("No audio files found for this book.") })
+    -- Check if this is a resume of an incomplete download.
+    -- If the book is already in the manifest with partial/pending files,
+    -- we must skip prepare_download (which would reset all file statuses
+    -- to "pending", destroying the "partial" status that enables resume).
+    local result = nil
+    local existing_entry = manifest.getBook(item.id)
+    if existing_entry and manifest.hasIncompleteFiles(item.id) then
+        -- Resume: use existing manifest entry with "partial" statuses intact
+        abs_logger.info("Resuming incomplete download: " .. (item.title or item.id))
+        result = existing_entry
+    else
+        local ok, prepare_result = downloader.prepare_download(item, manifest, config)
+        if not ok then
+            if prepare_result == "already_downloaded" then
+                -- Gap 3: Re-download prompt
+                UIManager:show(ConfirmBox:new{
+                    text = _("Already downloaded. Re-download?"),
+                    ok_text = _("Re-download"),
+                    ok_callback = function()
+                        local lfs = _G.lfs or require("lfs")
+                        local fs = {
+                            delete_file = function(path) os.remove(path) end,
+                            delete_dir = function(path) lfs.rmdir(path) end,
+                        }
+                        downloader.delete_book(item.id, manifest, fs)
+                        self:_onDownloadBook(item)
+                    end,
+                })
+            else
+                UIManager:show(InfoMessage:new{ text = _("No audio files found for this book.") })
+            end
+            return
         end
-        return
+        result = prepare_result
+    end
+    -- Calculate already-downloaded bytes (for resume progress display)
+    local function get_existing_bytes(entry, fs)
+        local existing = 0
+        for _, f in ipairs(entry.files) do
+            if f.status == "partial" then
+                local size = fs.get_file_size(entry.local_dir .. "/" .. f.filename)
+                if size then existing = existing + size end
+            end
+        end
+        return existing
     end
 
-    -- Gap 2: Free space check
-    local needed = downloader.calculate_download_size(result.files)
+    -- Gap 2: Free space check (only count remaining bytes for resume)
+    local total_sizes = downloader.calculate_download_size(result.files)
+    local already_on_disk = get_existing_bytes(result, {
+        get_file_size = function(path)
+            local lfs = _G.lfs or require("lfs")
+            local attr = lfs.attributes(path)
+            return attr and attr.size or nil
+        end,
+    })
+    local needed = total_sizes - already_on_disk
     if needed > 0 then
         local download_dir = config.get("download_dir") or "/tmp"
         local free_bytes = downloader.get_free_space(download_dir)
@@ -677,7 +709,8 @@ function LibraryBrowserView:_onDownloadBook(item, ebook_only)
     local state = downloader.create_download_state()
     state.start_time = os.time()
     state.total_files = #result.files
-    state.total_bytes = downloader.calculate_download_size(result.files)
+    state.total_bytes = total_sizes
+    state.bytes_downloaded = already_on_disk  -- resume-aware progress
 
     -- Show progress widget
     if has_progress then

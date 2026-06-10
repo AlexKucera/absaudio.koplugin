@@ -583,9 +583,13 @@ function downloader.start_chunked_download(entry, file, deps)
     local extra_headers = nil
     local local_size = deps.fs.get_file_size(entry.local_dir .. "/" .. file.filename) or 0
 
+    abs_logger.info(string.format(
+        "start_chunked_download: file=%s status=%s local_size=%d expected_size=%d",
+        file.filename, tostring(file.status), local_size, file.size or 0))
     if file.status == "partial" and local_size > 0 and local_size < file.size then
         open_mode = "ab"
         extra_headers = { ["Range"] = "bytes=" .. tostring(local_size) .. "-" }
+        abs_logger.info("Resume: open_mode=" .. open_mode .. " Range=" .. tostring(extra_headers["Range"]))
     end
 
     local file_handle = deps.fs.open(entry.local_dir .. "/" .. file.filename, open_mode)
