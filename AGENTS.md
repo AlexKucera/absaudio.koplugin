@@ -53,6 +53,7 @@ They capture what was done, decisions & rationale, gotchas & fixes, and next ste
 
 <!-- write-log: session-log-index -->
 
+| 2026-06-10 | issue | [fix-book-detail-resume-progress-zero_log.md](docs/devlog/20260610-fix-book-detail-resume-progress-zero_log.md) | Fixed book detail resume progress always showing 0%; ported `get_existing_bytes()` + `bytes_downloaded=already_on_disk` + free-space fix from library_browser; 2 new tests; 365 total pass |
 | 2026-06-10 | issue | [fix-ebook-audio-download-status-independent_log.md](docs/devlog/20260610-fix-ebook-audio-download-status-independent_log.md) | Fixed ebook download overwriting audio manifest; per-type status tracking in book detail; fixed reconcile_manifest `fs:` crash; 306 tests pass |
 
 | 2026-06-10 | issue | [issue05-download-pipeline-acceptance-audit-gap-close_log.md](docs/devlog/20260610-issue05-download-pipeline-acceptance-audit-gap-close_log.md) | Audited all 13 acceptance criteria; added Open Ebook button + ReaderUI integration; fixed `_itemFromManifest` ebook reconstruction; 309 tests pass |

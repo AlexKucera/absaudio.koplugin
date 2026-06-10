@@ -908,9 +908,30 @@ function BookDetailView:_onDownloadBook(item, ebook_only)
         end
     end
 
-    -- Free space check
+    -- Calculate already-downloaded bytes (for resume progress display)
+    local function get_existing_bytes(entry, fs_impl)
+        local existing = 0
+        for _, f in ipairs(entry.files) do
+            if f.status == "partial" then
+                local size = fs_impl.get_file_size(entry.local_dir .. "/" .. f.filename)
+                if size then existing = existing + size end
+            end
+        end
+        return existing
+    end
+
+    local lfs_for_calc = _G.lfs or require("lfs")
+    local fs_calc = {
+        get_file_size = function(path)
+            local attr = lfs_for_calc.attributes(path)
+            return attr and attr.size or nil
+        end,
+    }
+
+    -- Free space check (only count remaining bytes for resume)
     local total_sizes = downloader.calculate_download_size(result.files)
-    local needed = total_sizes
+    local already_on_disk = get_existing_bytes(result, fs_calc)
+    local needed = total_sizes - already_on_disk
     if needed > 0 then
         local dl_dir = config.get("download_dir") or "/tmp"
         local free_bytes = downloader.get_free_space(dl_dir)
@@ -928,6 +949,7 @@ function BookDetailView:_onDownloadBook(item, ebook_only)
     state.start_time = os.time()
     state.total_files = #result.files
     state.total_bytes = total_sizes
+    state.bytes_downloaded = already_on_disk  -- resume-aware progress
 
     if has_progress then
         progress.show({

@@ -1876,6 +1876,35 @@ run_test("prepare_download merges audio into existing ebook-only entry", functio
     end
     end)
 
+    -- Regression: book_detail resume must initialize bytes_downloaded to existing bytes
+    -- When resuming a partial download, state.bytes_downloaded must be pre-seeded
+    -- with the size of data already on disk, otherwise progress shows 0%.
+    run_test("resume: bytes_downloaded initialized to existing disk bytes", function()
+        local state = downloader.create_download_state()
+        state.total_files = 1
+        state.total_bytes = 1000000  -- 1 MB total
+
+        local already_on_disk = 500000  -- 500 KB already on disk
+        state.bytes_downloaded = already_on_disk
+
+        mock.assert_equals(state.bytes_downloaded, 500000,
+            "bytes_downloaded should start at existing byte count")
+        mock.assert_equals(state:progress_fraction(), 0.5,
+            "progress_fraction should reflect pre-existing data (50%)")
+    end)
+
+    run_test("resume: progress at zero without pre-seeding (demonstrates the bug)", function()
+        local state = downloader.create_download_state()
+        state.total_files = 1
+        state.total_bytes = 1000000
+
+        -- BUG: book_detail forgets to set bytes_downloaded = already_on_disk
+        mock.assert_equals(state.bytes_downloaded, 0,
+            "bytes_downloaded defaults to 0 (bug: should be pre-seeded on resume)")
+        mock.assert_equals(state:progress_fraction(), 0.0,
+            "progress_fraction is 0 without pre-seeding (the reported bug)")
+    end)
+
 -- Summary
 print(string.format("\n%d passed, %d failed", passed, failed))
 
