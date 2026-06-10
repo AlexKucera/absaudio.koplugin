@@ -12,6 +12,7 @@ All notable changes to this project will be documented in this file. The format 
 - **api:** add `downloadFile` endpoint with Range header support for resuming partial downloads
 
 ### fix
+- **download:** fix ebook download never executing — the ebook branch in `_onDownloadBook` was a TODO stub that returned early after showing "Ebook download prepared"; unified ebook and audio paths into a single shared pipeline so ebook files actually download to disk
 - **download:** fix cancel button hanging emulator until download completes — `scheduleIn(0, pump)` made each pump "due now" so UIManager's task drain loop never yielded to input event processing; changed to `scheduleIn(0.05)` (50ms) so cancel taps are dispatched between chunks
 - **book-detail:** fix ebook file detection — ABS API returns `media.ebookFile` (singular object), not `ebookFiles` (plural array); convert to internal format with fallback
 - **downloader:** fix `get_ebook_files` to check `media.ebookFile` first (ABS format), falling back to `media.ebooks`

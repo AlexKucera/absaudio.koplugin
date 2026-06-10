@@ -55,6 +55,7 @@ They capture what was done, decisions & rationale, gotchas & fixes, and next ste
 
 | Date | Type | File | Summary |
 |------|------|------|----------|
+| 2026-06-10 | issue | [fix-ebook-download-stub-never-executes_log.md](docs/devlog/20260610-fix-ebook-download-stub-never-executes_log.md) | Fixed ebook download never executing (TODO stub returned early); unified ebook+audio into shared download pipeline; 282 tests pass |
 | 2026-06-10 | issue | [fix-download-resume-resets-to-zero_log.md](docs/devlog/20260610-fix-download-resume-resets-to-zero_log.md) | Fixed resume always starting from zero; skip `prepare_download` for partial downloads (preserves "partial" status); fixed progress display to show already-downloaded bytes; 4 new tests; 77 downloader tests pass |
 | 2026-06-10 | issue | [fix-cancel-download-hang-starves-event-loop_log.md](docs/devlog/20260610-fix-cancel-download-hang-starves-event-loop_log.md) | Fixed cancel-download hanging emulator; `scheduleIn(0)` starved UIManager event loop; changed to `scheduleIn(0.05)`; 278 tests pass |
 | 2026-06-09 | issue | [fix-yield-across-c-call-boundary-download_log.md](docs/devlog/20260609-fix-yield-across-c-call-boundary-download_log.md) | Fixed `attempt to yield across C-call boundary` in audiobook downloads; created raw socket `chunked_http.lua` module; 6 new tests; 295 total pass |
