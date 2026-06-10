@@ -267,7 +267,11 @@ function BookDetailView:_addCoverArt()
         manifest.init()
         local book = manifest.getBook(item_id)
         if book and book.local_dir then
-            cover_path = book.local_dir .. "/cover.jpg"
+            local candidate = book.local_dir .. "/cover.jpg"
+            local lfs_mod = _G.lfs or (pcall(require, "lfs") and require("lfs"))
+            if lfs_mod and lfs_mod.attributes(candidate, "mode") == "file" then
+                cover_path = candidate
+            end
         end
     end
 

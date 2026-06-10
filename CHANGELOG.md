@@ -17,6 +17,8 @@ All notable changes to this project will be documented in this file. The format 
 - **download:** fix `attempt to yield across C-call boundary` crash — `socket.http.request` wraps everything in `socket.protect(pcall)`, making `coroutine.yield()` inside ltn12 sinks impossible; created raw socket `chunked_http` module that reads body chunks via `sock:receive()` and yields between reads in pure Lua context, bypassing C-boundary entirely
 - **library-browser:** wire free space check to show InfoMessage when insufficient disk space
 - **library-browser:** wire download/delete callbacks through navigator to book detail view
+- **manifest:** fix `init()` discarding in-memory download state by re-reading from disk — make init idempotent (no-op after first call), add `flush()` to all mutating functions so changes persist
+- **book-detail:** fix checkerboard cover after download — verify `cover.jpg` exists on disk before using it, fall through to cached cover or placeholder
 
 ### fix
 

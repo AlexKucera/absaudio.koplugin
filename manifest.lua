@@ -39,10 +39,21 @@ local function get_books()
 end
 
 --- Initialize manifest store (idempotent)
+--- Only opens a new LuaSettings on the first call; subsequent calls are no-ops
+--- so that in-memory mutations (addBook, updateFileStatus, etc.) are preserved.
 function manifest.init()
+    if settings then return end
     settings = LuaSettings:open(manifest_path())
     -- Ensure books table exists
     get_books()
+end
+
+--- Persist current manifest state to disk.
+--- Call after any mutation that should survive across sessions.
+function manifest.flush()
+    if settings then
+        settings:flush()
+    end
 end
 
 --- Add a book entry, keyed by abs_item_id
@@ -51,6 +62,7 @@ function manifest.addBook(entry)
     local books = get_books()
     books[entry.abs_item_id] = entry
     settings:saveSetting("books", books)
+    settings:flush()
 end
 
 --- Get a single book by ABS item ID
@@ -83,6 +95,7 @@ function manifest.updateBook(abs_item_id, updates)
             entry[key] = value
         end
         settings:saveSetting("books", books)
+        settings:flush()
     end
 end
 
@@ -92,6 +105,7 @@ function manifest.removeBook(abs_item_id)
     local books = get_books()
     books[abs_item_id] = nil
     settings:saveSetting("books", books)
+    settings:flush()
 end
 
 --- Update the download status of a specific file within a book
@@ -109,6 +123,7 @@ function manifest.updateFileStatus(abs_item_id, filename, status)
             end
         end
         settings:saveSetting("books", books)
+        settings:flush()
     end
 end
 
@@ -123,6 +138,7 @@ function manifest.updatePosition(abs_item_id, current_time, is_finished)
         entry.current_time = current_time
         entry.is_finished = is_finished
         settings:saveSetting("books", books)
+        settings:flush()
     end
 end
 
@@ -143,6 +159,12 @@ function manifest.getRecentBook()
         end
     end
     return recent
+end
+
+--- Reset the in-memory settings handle (for testing)
+--- Allows init() to re-open from disk on next call
+function manifest._resetSettings()
+    settings = nil
 end
 
 --- Check if a book is fully downloaded (all files complete)

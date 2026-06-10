@@ -502,6 +502,103 @@ run_test("getDownloadedSize returns sum of complete file sizes", function()
 end)
 
 -- ============================================================
+-- Regression: manifest.init() must not discard in-memory state
+-- Bug: init() used to re-open LuaSettings from disk, losing
+-- addBook/updateFileStatus changes that hadn't been flushed.
+-- Fix: init() is now idempotent (no-op after first call).
+-- ============================================================
+run_test("init() is idempotent: second call does not discard data", function()
+    mock_settings = mock.create_lua_settings({})
+    manifest._resetSettings()  -- allow init to run fresh
+
+    manifest.init()
+
+    manifest.addBook({
+        abs_item_id = "li_reinit_test",
+        title = "Reinit Test",
+        author = "Author",
+        local_dir = "/tmp/reinit",
+        files = {
+            { filename = "test.m4b", ino = 1, size = 100, type = "audio", status = "pending" },
+        },
+        current_time = 0,
+        duration = 3600,
+        chapters = {},
+        is_finished = false,
+        last_synced_at = 0,
+    })
+
+    -- Simulate what happens after download: updateFileStatus, then init()
+    manifest.updateFileStatus("li_reinit_test", "test.m4b", "complete")
+
+    -- Before fix, this would re-read from disk and lose everything
+    manifest.init()
+
+    local book = manifest.getBook("li_reinit_test")
+    assert(book ~= nil, "getBook should still find the book after init()")
+    mock.assert_equals(book.title, "Reinit Test", "title should survive init()")
+
+    -- isDownloaded should return true since the file is complete
+    mock.assert_equals(manifest.isDownloaded("li_reinit_test"), true,
+        "isDownloaded should return true after updateFileStatus + init()")
+
+    -- Verify file status survived
+    mock.assert_equals(book.files[1].status, "complete",
+        "file status should be 'complete' after init()")
+end)
+
+run_test("_resetSettings allows init to re-run", function()
+    mock_settings = mock.create_lua_settings({})
+    manifest._resetSettings()
+
+    manifest.init()
+    manifest.addBook({
+        abs_item_id = "li_reset_test",
+        title = "Reset Test",
+        author = "A",
+        local_dir = "/tmp/reset",
+        files = {},
+        current_time = 0,
+        duration = 0,
+        chapters = {},
+        is_finished = false,
+        last_synced_at = 0,
+    })
+
+    -- Reset and re-init with fresh settings
+    manifest._resetSettings()
+    mock_settings = mock.create_lua_settings({})
+    manifest.init()
+
+    local book = manifest.getBook("li_reset_test")
+    assert(book == nil, "getBook should return nil after reset with fresh settings")
+end)
+
+run_test("flush() is called by addBook (mock verify)", function()
+    local flush_count = 0
+    mock_settings = mock.create_lua_settings({})
+    -- Override flush to count calls
+    mock_settings.flush = function(self) flush_count = flush_count + 1 end
+    manifest._resetSettings()
+    manifest.init()
+
+    manifest.addBook({
+        abs_item_id = "li_flush_test",
+        title = "Flush Test",
+        author = "A",
+        local_dir = "/tmp/flush",
+        files = {},
+        current_time = 0,
+        duration = 0,
+        chapters = {},
+        is_finished = false,
+        last_synced_at = 0,
+    })
+
+    mock.assert_equals(flush_count, 1, "addBook should call flush once")
+end)
+
+-- ============================================================
 -- Summary
 -- ============================================================
 print(string.format("\n%d passed, %d failed", passed, failed))
