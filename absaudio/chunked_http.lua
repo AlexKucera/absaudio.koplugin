@@ -167,10 +167,13 @@ end
 -- @param headers table|nil   Additional request headers
 -- @param on_chunk function   Called with each data chunk: on_chunk(data)
 -- @param chunk_size number   Read size per iteration (default 32KB)
+-- @param depth number         Redirect depth (internal; default 0, max 10)
 -- @return boolean ok
 -- @return number|string      status_code on success, error on failure
 ------------------------------------------------------------------------
-function chunked_http.download(url, headers, on_chunk, chunk_size)
+local MAX_REDIRECTS = 10
+
+function chunked_http.download(url, headers, on_chunk, chunk_size, depth)
     if not socket_mod then
         ensure_initialized()
     end
@@ -179,6 +182,7 @@ function chunked_http.download(url, headers, on_chunk, chunk_size)
     end
 
     chunk_size = chunk_size or DEFAULT_CHUNK_SIZE
+    depth = depth or 0
 
     -- Parse URL
     local parsed, parse_err = parse_url(url)
@@ -292,7 +296,11 @@ function chunked_http.download(url, headers, on_chunk, chunk_size)
                 .. (parsed.port ~= 80 and parsed.port ~= 443 and (":" .. parsed.port) or "")
                 .. redirect_url
         end
-        return chunked_http.download(redirect_url, headers, on_chunk, chunk_size)
+        if depth >= MAX_REDIRECTS then
+            pcall(function() sock:close() end)
+            return false, "too many redirects (" .. depth .. " hops)"
+        end
+        return chunked_http.download(redirect_url, headers, on_chunk, chunk_size, depth + 1)
     end
 
     -- Check for error status
