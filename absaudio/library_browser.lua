@@ -601,6 +601,9 @@ function LibraryBrowserView:onBookTap(item)
                 local ebook_only = data.ebook_only or false
                 self:_onDeleteBook(book_item, ebook_only)
             end,
+            on_open_ebook = function(filepath)
+                self:_onOpenEbook(filepath)
+            end,
         })
     end
     return true
@@ -784,6 +787,9 @@ function LibraryBrowserView:_onDownloadBook(item, ebook_only)
                             local eo = data.ebook_only or false
                             self_ref:_onDeleteBook(b, eo)
                         end,
+                        on_open_ebook = function(filepath)
+                            self_ref:_onOpenEbook(filepath)
+                        end,
                     })
                 end)
             end
@@ -824,6 +830,9 @@ function LibraryBrowserView:_onDownloadBook(item, ebook_only)
                             local b = data.item or data
                             local eo = data.ebook_only or false
                             self_ref:_onDeleteBook(b, eo)
+                        end,
+                        on_open_ebook = function(filepath)
+                            self_ref:_onOpenEbook(filepath)
                         end,
                         })
                     end)
@@ -925,6 +934,9 @@ function LibraryBrowserView:_onDeleteBook(item, ebook_only)
                             local eo = data.ebook_only or false
                             self:_onDeleteBook(b, eo)
                         end,
+                        on_open_ebook = function(filepath)
+                            self:_onOpenEbook(filepath)
+                        end,
                     })
                 end)
             end
@@ -979,11 +991,24 @@ function LibraryBrowserView:_onDeleteEbookOnly(item)
                             local eo = data.ebook_only or false
                             self:_onDeleteBook(b, eo)
                         end,
+                        on_open_ebook = function(filepath)
+                            self:_onOpenEbook(filepath)
+                        end,
                     })
                 end)
             end
         end,
     })
+end
+
+------------------------------------------------------------------------
+-- Open ebook in KOReader's ReaderUI
+-- @param filepath string  full local path to the ebook file
+------------------------------------------------------------------------
+function LibraryBrowserView:_onOpenEbook(filepath)
+    abs_logger.info("Opening ebook: " .. tostring(filepath))
+    local ReaderUI = require("apps/reader/readerui")
+    ReaderUI:showReader(filepath)
 end
 
 function LibraryBrowserView:onCycleSort()

@@ -855,6 +855,172 @@ run_test("_addEbookFiles handles LuaJSON null sentinel for ebookFile", function(
     mock.assert_equals(find_text_in_view(view, "Oathbringer.pdf"), false,
         "should NOT show ebook filename when ebookFile is null sentinel")
 end)
+
+-- ============================================================
+-- Test: Open Ebook button appears when ebook is fully downloaded
+-- ============================================================
+
+run_test("_addEbookFiles shows Open Ebook button when ebook is complete", function()
+    local item = {
+        id = "item_ebook_open",
+        title = "Openable Ebook",
+        mediaType = "book",
+        media = {
+            duration = 3600,
+            metadata = { title = "Openable Ebook", authorName = "Author" },
+            ebookFile = {
+                ino = "999",
+                metadata = {
+                    filename = "TestBook.epub",
+                    ext = ".epub",
+                    size = 1024000,
+                },
+                ebookFormat = "epub",
+            },
+        },
+    }
+
+    mock_api_configured = false
+    mock_manifest_books = {
+        item_ebook_open = {
+            abs_item_id = "item_ebook_open",
+            title = "Openable Ebook",
+            author = "Author",
+            local_dir = "/tmp/test_ebook",
+            files = {
+                {
+                    filename = "TestBook.epub",
+                    ino = "999",
+                    size = 1024000,
+                    type = "ebook",
+                    status = "complete",
+                },
+            },
+        },
+    }
+
+    local open_ebook_called = false
+    local open_ebook_path = nil
+
+    local view = detail.show({
+        item = item,
+        on_download = function(data) end,
+        on_delete = function(data) end,
+        on_open_ebook = function(path)
+            open_ebook_called = true
+            open_ebook_path = path
+        end,
+    })
+
+    mock.assert_equals(view ~= nil, true, "should have created a view")
+
+    mock.assert_equals(view ~= nil, true, "should have created a view")
+    mock.assert_equals(find_text_in_view(view, "Open Ebook"), true,
+        "should show Open Ebook button when ebook is complete")
+end)
+
+run_test("_addEbookFiles does NOT show Open Ebook button when ebook is not downloaded", function()
+    local item = {
+        id = "item_ebook_nodl",
+        title = "No Download Ebook",
+        mediaType = "book",
+        media = {
+            duration = 3600,
+            metadata = { title = "No Download Ebook", authorName = "Author" },
+            ebookFile = {
+                ino = "888",
+                metadata = {
+                    filename = "NoDL.epub",
+                    ext = ".epub",
+                    size = 500000,
+                },
+                ebookFormat = "epub",
+            },
+        },
+    }
+
+    mock_api_configured = false
+    mock_manifest_books = {}  -- no manifest entry = not downloaded
+
+    local view = detail.show({
+        item = item,
+        on_download = function(data) end,
+        on_delete = function(data) end,
+        on_open_ebook = function(path) end,
+    })
+
+    mock.assert_equals(view ~= nil, true, "should have created a view")
+    mock.assert_equals(find_text_in_view(view, "Open Ebook"), false,
+        "should NOT show Open Ebook button when ebook is not downloaded")
+end)
+
+run_test("_addEbookFiles on_open_ebook callback receives correct file path", function()
+    local item = {
+        id = "item_ebook_cb",
+        title = "Callback Ebook",
+        mediaType = "book",
+        media = {
+            duration = 3600,
+            metadata = { title = "Callback Ebook", authorName = "Author" },
+            ebookFile = {
+                ino = "777",
+                metadata = {
+                    filename = "CallbackBook.pdf",
+                    ext = ".pdf",
+                    size = 2048000,
+                },
+                ebookFormat = "pdf",
+            },
+        },
+    }
+
+    mock_api_configured = false
+    mock_manifest_books = {
+        item_ebook_cb = {
+            abs_item_id = "item_ebook_cb",
+            title = "Callback Ebook",
+            author = "Author",
+            local_dir = "/tmp/callback_ebook",
+            files = {
+                {
+                    filename = "CallbackBook.pdf",
+                    ino = "777",
+                    size = 2048000,
+                    type = "ebook",
+                    status = "complete",
+                },
+            },
+        },
+    }
+
+    local open_ebook_called = false
+    local open_ebook_path = nil
+
+    local view = detail.show({
+        item = item,
+        on_download = function(data) end,
+        on_delete = function(data) end,
+        on_open_ebook = function(path)
+            open_ebook_called = true
+            open_ebook_path = path
+        end,
+    })
+
+    -- Simulate tapping the Open Ebook button
+    -- Find the button's InputContainer in content_group
+    for _, widget in ipairs(view.content_group or {}) do
+        if widget[1] and widget[1].text and widget[1].text:match("Open Ebook") then
+            if widget.onTapOpenEbook then
+                widget:onTapOpenEbook()
+            end
+            break
+        end
+    end
+
+    mock.assert_equals(open_ebook_called, true, "on_open_ebook should be called")
+    mock.assert_equals(open_ebook_path, "/tmp/callback_ebook/CallbackBook.pdf",
+        "should pass correct file path")
+end)
 if #errors > 0 then
     print("\nFailures:")
     for _, e in ipairs(errors) do
@@ -867,7 +1033,7 @@ end
 -- ============================================================
 
 -- Ebook per-type status tested in test_downloader.lua (slices 11-13)
--- Book detail UI tests for ebook status covered by existing _addEbookFiles tests
+-- Book detail UI tests for ebook status + Open Ebook button covered by _addEbookFiles tests
 
 print(string.format("\n%d passed, %d failed", passed, failed))
 

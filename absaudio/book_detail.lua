@@ -689,10 +689,55 @@ function BookDetailView:_addEbookFiles(ebook_files)
 
     -- Ebook download/delete buttons
     if all_ebooks_complete and not any_ebook_incomplete then
-        -- All ebooks downloaded — show delete button
+        -- All ebooks downloaded — show Open + Delete buttons
+        -- Resolve ebook file path from manifest
+        local ebook_path = nil
+        if has_manifest then
+            local book = manifest.getBook(self.item.id)
+            if book and book.local_dir then
+                for _, f in ipairs(book.files or {}) do
+                    if f.type == "ebook" and f.status == "complete" then
+                        ebook_path = book.local_dir .. "/" .. f.filename
+                        break
+                    end
+                end
+            end
+        end
+
+        -- Open Ebook button
+        if ebook_path and self.on_open_ebook then
+            table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
+            local open_btn = TextWidget:new{
+                text = _("Open Ebook"),
+                face = Font:getFace("cfont", 16),
+                fgcolor = Blitbuffer.COLOR_BLUE,
+            }
+            local open_container = InputContainer:new{
+                dimen = Geom:new{
+                    w = self.content_width,
+                    h = open_btn:getSize().h + Size.padding.default,
+                },
+            }
+            open_container.ges_events.TapOpenEbook = {
+                GestureRange:new{
+                    ges = "tap",
+                    range = open_container.dimen,
+                },
+            }
+            local on_open_ebook_cb = self.on_open_ebook
+            function open_container:onTapOpenEbook()
+                if on_open_ebook_cb then on_open_ebook_cb(ebook_path) end
+                return true
+            end
+            open_container[1] = open_btn
+            table.insert(self.content_group, open_container)
+        end
+
+        -- Delete button
         if self.on_delete then
+            table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
             local delete_btn = TextWidget:new{
-                text = _("🗑 Delete ebook"),
+                text = _("Delete ebook"),
                 face = Font:getFace("cfont", 16),
                 fgcolor = Blitbuffer.COLOR_DARK_GRAY,
             }
@@ -836,6 +881,7 @@ function detail.show(data)
     if not item then return nil end
     local on_download = data.on_download
     local on_delete = data.on_delete
+    local on_open_ebook = data.on_open_ebook
     abs_logger.info("Showing book detail: " .. (item.title or item.id or "unknown"))
 
     -- Initialize manifest for potential fallback
@@ -855,7 +901,7 @@ function detail.show(data)
             UIManager:close(loading)
             local prepared, err = detail.prepare(item)
             if prepared then
-                local view = detail._renderView(prepared, on_download, on_delete)
+                local view = detail._renderView(prepared, on_download, on_delete, on_open_ebook)
                 if has_navigator then
                     nav._setCurrent(view)
                 end
@@ -871,7 +917,7 @@ function detail.show(data)
         -- Synchronous path
         local prepared, err = detail.prepare(item)
         if prepared then
-            return detail._renderView(prepared, on_download, on_delete)
+            return detail._renderView(prepared, on_download, on_delete, on_open_ebook)
         else
             error_handler.show(err.type or "network", err.message or _("Unable to load book details."))
             return nil
@@ -882,11 +928,12 @@ end
 ------------------------------------------------------------------------
 -- Render the detail view widget
 ------------------------------------------------------------------------
-function detail._renderView(item, on_download, on_delete)
+function detail._renderView(item, on_download, on_delete, on_open_ebook)
     local view = BookDetailView:new{
         item = item,
         on_download = on_download,
         on_delete = on_delete,
+        on_open_ebook = on_open_ebook,
     }
     UIManager:show(view)
     UIManager:setDirty(view, "full")
@@ -914,6 +961,25 @@ end
 -- (for offline viewing of downloaded books)
 ------------------------------------------------------------------------
 function detail._itemFromManifest(item, book)
+    -- Reconstruct ebookFile from manifest if ebook files exist
+    local ebookFile = nil
+    if book.files then
+        for _, f in ipairs(book.files) do
+            if f.type == "ebook" then
+                ebookFile = {
+                    ino = f.ino,
+                    metadata = {
+                        filename = f.filename,
+                        ext = "." .. (f.filename:match("%.(%w+)$") or ""),
+                        size = f.size,
+                    },
+                    ebookFormat = f.filename:match("%.(%w+)$") or "",
+                }
+                break  -- use first ebook file
+            end
+        end
+    end
+
     return {
         id = item.id or book.abs_item_id,
         title = book.title or item.title,
@@ -927,6 +993,7 @@ function detail._itemFromManifest(item, book)
                 authorName = book.author,
             },
             chapters = book.chapters or {},
+            ebookFile = ebookFile,
         },
         audioFiles = {},  -- Manifest doesn't track ABS file objects
         ebookFiles = {},  -- Manifest doesn't track ABS file objects
