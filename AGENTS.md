@@ -49,6 +49,7 @@ They capture what was done, decisions & rationale, gotchas & fixes, and next ste
 | 2026-06-09 | issue | [issue17-dashboard-data-render-split_log.md](docs/devlog/20260609-issue17-dashboard-data-render-split_log.md) | Extracted `dashboard.prepare()` from `show()`; 4 new tests; 166 total pass |
 | 2026-06-09 | issue | [issue18-book-detail-data-render-split_log.md](docs/devlog/20260609-issue18-book-detail-data-render-split_log.md) | Extracted `detail.prepare()` from `show()`; 4 new tests; 172 total pass |
 | 2026-06-09 | issue | [issue20-main-lua-navigator-tests_log.md](docs/devlog/20260609-issue20-main-lua-navigator-tests_log.md) | Created `spec/test_main.lua` with 10 tests; navigator registration, onOpenDashboard wiring, dispatcher routing, first-run behavior; 196 total pass |
+| 2026-06-10 | generic | [dashboard-downloaded-books-tappable-detail-nav_log.md](docs/devlog/20260610-dashboard-downloaded-books-tappable-detail-nav_log.md) | Made downloaded books in dashboard tappable; added `_onBookTap` → nav.push('detail'); 2 new tests; 311 total pass |
 
 <!-- write-log: session-log-index -->
 

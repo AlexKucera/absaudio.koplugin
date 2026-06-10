@@ -542,6 +542,91 @@ run_test("_onBrowseLibrary calls nav.push('browser') instead of nested callbacks
 end)
 
 -- ============================================================
+-- Test: _onBookTap pushes detail screen via navigator
+-- ============================================================
+run_test("_onBookTap pushes 'detail' screen with item.id mapped from abs_item_id", function()
+    local pushed = {}
+    package.loaded["absaudio/navigator"].push = function(name, data)
+        table.insert(pushed, { name = name, data = data })
+    end
+
+    local shown_widgets = {}
+    local orig_show = package.loaded["ui/uimanager"].show
+    package.loaded["ui/uimanager"].show = function(self, widget)
+        table.insert(shown_widgets, widget)
+    end
+
+    dashboard.show({})
+    local view = shown_widgets[#shown_widgets]
+
+    -- Simulate tapping a manifest book with abs_item_id
+    local book = {
+        abs_item_id = "abc-123",
+        title = "Test Downloaded Book",
+        author = "Test Author",
+    }
+    view:_onBookTap(book)
+
+    mock.assert_equals(#pushed, 1, "should have called nav.push once")
+    mock.assert_equals(pushed[1].name, "detail", "should push 'detail' screen")
+    mock.assert_equals(pushed[1].data.item.id, "abc-123", "item.id should come from abs_item_id")
+    mock.assert_equals(pushed[1].data.item.title, "Test Downloaded Book", "item.title should be preserved")
+
+    package.loaded["ui/uimanager"].show = orig_show
+    package.loaded["absaudio/navigator"].push = function() end
+end)
+
+run_test("downloaded book entries are wrapped in tappable containers that call _onBookTap", function()
+    -- Set up manifest mock with two books (same pattern as other tests)
+    setup_manifest_mock(nil, {
+        { abs_item_id = "book-1", title = "Alpha Book", author = "Author A" },
+        { abs_item_id = "book-2", title = "Beta Book", author = "Author B" },
+    })
+
+    -- Reload module to pick up new manifest mock
+    package.loaded["absaudio/dashboard_widget"] = nil
+    local dash = require("absaudio/dashboard_widget")
+
+    local pushed = {}
+    package.loaded["absaudio/navigator"].push = function(name, data)
+        table.insert(pushed, { name = name, data = data })
+    end
+
+    local shown_widgets = {}
+    local orig_show = package.loaded["ui/uimanager"].show
+    package.loaded["ui/uimanager"].show = function(self, widget)
+        table.insert(shown_widgets, widget)
+    end
+
+    dash.show({})
+    local view = shown_widgets[#shown_widgets]
+
+    -- Find tappable containers for books in the content_group
+    local tap_containers = {}
+    for _, el in ipairs(view.content_group) do
+        if type(el) == "table" and el.ges_events and el.ges_events.TapBook then
+            table.insert(tap_containers, el)
+        end
+    end
+
+    mock.assert_equals(#tap_containers, 2, "should have 2 tappable book entries")
+
+    -- Simulate tapping the first book
+    tap_containers[1].onTapBook(tap_containers[1])
+    mock.assert_equals(#pushed, 1, "should have called nav.push once")
+    mock.assert_equals(pushed[1].name, "detail", "should push 'detail' screen")
+    mock.assert_equals(pushed[1].data.item.id, "book-1", "item.id should be book-1's abs_item_id")
+
+    -- Simulate tapping the second book
+    tap_containers[2].onTapBook(tap_containers[2])
+    mock.assert_equals(#pushed, 2, "should have called nav.push twice")
+    mock.assert_equals(pushed[2].data.item.id, "book-2", "item.id should be book-2's abs_item_id")
+
+    package.loaded["ui/uimanager"].show = orig_show
+    package.loaded["absaudio/navigator"].push = function() end
+end)
+
+-- ============================================================
 -- Summary
 -- ============================================================
 print(string.format("\n%d passed, %d failed", passed, failed))

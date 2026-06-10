@@ -328,7 +328,28 @@ function DashboardView:_addDownloadedBooksSection()
                 face = Font:getFace("cfont", 14),
                 width = self.content_width,
             }
-            table.insert(self.content_group, book_widget)
+
+            -- Wrap in tappable container to navigate to book detail
+            local tap_container = InputContainer:new{
+                dimen = Geom:new{
+                    w = self.content_width,
+                    h = book_widget:getSize().h + Size.padding.small,
+                },
+            }
+            tap_container.ges_events.TapBook = {
+                GestureRange:new{
+                    ges = "tap",
+                    range = tap_container.dimen,
+                },
+            }
+            tap_container.dashboard_ref = self.dashboard_ref
+            tap_container.book = book
+            function tap_container:onTapBook()
+                self.dashboard_ref:_onBookTap(self.book)
+                return true
+            end
+            tap_container[1] = book_widget
+            table.insert(self.content_group, tap_container)
             table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
         end
 
@@ -522,6 +543,19 @@ function DashboardView:_onExportDiagnostics()
         UIManager:show(InfoMessage:new{
             text = _("Export Diagnostics will be available in a future update."),
             timeout = 3,
+        })
+    end
+end
+
+function DashboardView:_onBookTap(book)
+    abs_logger.info("Book tapped from dashboard: " .. (book.title or "unknown"))
+    if has_navigator then
+        nav.push("detail", {
+            item = {
+                id = book.abs_item_id,
+                title = book.title,
+                author = book.author,
+            },
         })
     end
 end
