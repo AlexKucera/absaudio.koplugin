@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file. The format 
 - **download:** add coroutine-based chunked download (`start_chunked_download`) using raw socket I/O via `chunked_http` module that yields to KOReader event loop every 32KB, enabling progress updates and cancel during large file transfers
 - **download:** add ebook download button in book detail view with `ebook_only` flag
 - **api:** add `downloadFile` endpoint with Range header support for resuming partial downloads
+- **detail:** add Open Ebook button to open downloaded ebooks in KOReader ReaderUI; fix ebook section rendering when viewing downloaded books offline
 
 ### fix
 - **download:** fix ebook download never executing — the ebook branch in `_onDownloadBook` was a TODO stub that returned early after showing "Ebook download prepared"; unified ebook and audio paths into a single shared pipeline so ebook files actually download to disk
