@@ -13,6 +13,10 @@ All notable changes to this project will be documented in this file. The format 
 - **detail:** add Open Ebook button to open downloaded ebooks in KOReader ReaderUI; fix ebook section rendering when viewing downloaded books offline
 
 ### fix
+- **dashboard:** fix non-existent `downloader.download_single_file` call — replaced with correct API `start_chunked_download(entry, file, deps)`; also fixed wrong argument order `(file, entry, deps)` → `(entry, file, deps)`
+- **dashboard:** fix emulator crash on dashboard show — missing `cover_cache` require caused fallback to TextWidget without `face` parameter (nil face crash at font.lua:386); added proper face matching library_browser pattern
+- **dashboard:** fix KOReader `config` variable shadowing — renamed absaudio config to `abs_config` to avoid overwriting built-in `config` module
+- **dashboard:** rewrite download/delete/ebook handlers to mirror library_browser pipeline with full detail-view functionality from any navigation path
 - **download:** fix ebook download never executing — the ebook branch in `_onDownloadBook` was a TODO stub that returned early after showing "Ebook download prepared"; unified ebook and audio paths into a single shared pipeline so ebook files actually download to disk
 - **download:** fix ebook download overwriting audiobook manifest entry — `prepare_download` and `prepare_ebook_download` now merge files into existing entries instead of replacing them; audio and ebook download status tracked independently with per-type badges and action buttons
 - **download:** fix `lfs.attributes` crash on plugin init — `reconcile_manifest` used Lua `:` method call on a plain function table, passing the table as the first arg to `lfs.attributes`
