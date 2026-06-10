@@ -14,6 +14,7 @@ All notable changes to this project will be documented in this file. The format 
 
 ### fix
 
+- **book-detail:** fix ebook re-download silently failing after delete — `_onDeleteEbookOnly` was setting `f.status = nil` but leaving the file entry in `entry.files`, causing `prepare_ebook_download` to treat it as already-tracked and skip creating a fresh `"pending"` entry; now removes ebook entries from files array (matching library_browser behavior)
 - **book-detail:** initialize `bytes_downloaded` to existing disk bytes on resume so progress display shows correct percentage instead of 0%; also fix free-space check to subtract already-downloaded bytes so it doesn't falsely reject resumes
 - **book-detail:** make BookDetailView own its download/delete/ebook-open behavior as instance methods instead of receiving callbacks from callers; fixes all 4 PR #22 review findings: dashboard coroutine handle discarded (Finding #1), `self_ref` nil crash in delete handlers (Finding #2), ConfirmBox not required (Finding #3), and `config:get` colon-call silently ignoring user settings in downloader (Finding #4)
 - **downloader:** fix `config:get` colon-calls to `config.get` dot-calls so user-configured download directory and preferred format are actually read

@@ -1106,16 +1106,19 @@ function BookDetailView:_onDeleteEbookOnly(item)
     if not entry or not entry.files then return end
 
     local lfs_mod = _G.lfs or require("lfs")
+
+    -- Delete ebook files from disk and remove from manifest entry
+    local remaining_files = {}
     for _, f in ipairs(entry.files) do
         if f.type == "ebook" then
             local path = entry.local_dir .. "/" .. f.filename
-            if lfs_mod.attributes(path) then
-                os.remove(path)
-            end
-            f.status = nil
+            os.remove(path)
+        else
+            table.insert(remaining_files, f)
         end
     end
-    manifest.flush()
+    entry.files = remaining_files
+    manifest.addBook(entry)
     UIManager:show(InfoMessage:new{ text = _("Ebook deleted."), timeout = 2 })
 
     -- Refresh detail view (no callbacks needed)
