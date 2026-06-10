@@ -55,6 +55,7 @@ They capture what was done, decisions & rationale, gotchas & fixes, and next ste
 
 | Date | Type | File | Summary |
 |------|------|------|----------|
+| 2026-06-10 | issue | [fix-ebook-cancel-redownload-crash-nil-id_log.md](docs/devlog/20260610-fix-ebook-cancel-redownload-crash-nil-id_log.md) | Fixed crash on ebook re-download after cancel; unwrapped `{item, ebook_only}` envelope in 3 re-push callbacks; 15 library_browser tests pass |
 | 2026-06-10 | issue | [fix-ebook-download-stub-never-executes_log.md](docs/devlog/20260610-fix-ebook-download-stub-never-executes_log.md) | Fixed ebook download never executing (TODO stub returned early); unified ebook+audio into shared download pipeline; 282 tests pass |
 | 2026-06-10 | issue | [fix-download-resume-resets-to-zero_log.md](docs/devlog/20260610-fix-download-resume-resets-to-zero_log.md) | Fixed resume always starting from zero; skip `prepare_download` for partial downloads (preserves "partial" status); fixed progress display to show already-downloaded bytes; 4 new tests; 77 downloader tests pass |
 | 2026-06-10 | issue | [fix-cancel-download-hang-starves-event-loop_log.md](docs/devlog/20260610-fix-cancel-download-hang-starves-event-loop_log.md) | Fixed cancel-download hanging emulator; `scheduleIn(0)` starved UIManager event loop; changed to `scheduleIn(0.05)`; 278 tests pass |
@@ -78,7 +79,7 @@ They capture what was done, decisions & rationale, gotchas & fixes, and next ste
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **absaudio.koplugin** (453 symbols, 450 relationships, 0 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **absaudio.koplugin** (469 symbols, 467 relationships, 0 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

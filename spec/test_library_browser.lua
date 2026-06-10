@@ -655,6 +655,40 @@ run_test("onBookTap passes ebook_only flag through on_download", function()
 end)
 
 -- ============================================================
+-- Regression: re-push detail callbacks must unwrap {item, ebook_only}
+-- ============================================================
+run_test("re-push detail on_download callback unwraps ebook format", function()
+    -- Verify ALL nav.push("detail" ...) calls in library_browser.lua
+    -- pass on_download callbacks that correctly unwrap {item=..., ebook_only=true}
+    -- This prevents the crash when: ebook download → cancel → tap download again
+    local source_file = io.open("absaudio/library_browser.lua", "r")
+    local source = source_file:read("*a")
+    source_file:close()
+
+    -- Find all nav.push("detail" blocks and check their on_download callbacks
+    local bad_callbacks = 0
+    local good_callbacks = 0
+
+    -- Pattern: look for 'function(b) ... _onDownloadBook(b) end' which is the BUG pattern
+    -- The fix uses: function(data) local book_item = data.item or data ... end
+    for m in source:gmatch("on_download%s*=%s*function%(%s*b%s*%)%s*self_ref?:_onDownloadBook%(%s*b%s*%)%s*end") do
+        bad_callbacks = bad_callbacks + 1
+    end
+
+    -- Count the correct unwrapping callbacks
+    for m in source:gmatch("local book_item = data%.item or data") do
+        good_callbacks = good_callbacks + 1
+    end
+
+    -- The initial onBookTap at line ~593 also has an unwrapping callback
+    -- So we expect at least 3 unwrapping callbacks (initial + cancel + completion + delete-repush)
+    mock.assert_equals(bad_callbacks, 0,
+        "no on_download callbacks should pass raw 'b' to _onDownloadBook")
+    mock.assert_equals(good_callbacks >= 3, true,
+        "all re-push sites should use unwrapping callback (found " .. good_callbacks .. ")")
+end)
+
+-- ============================================================
 -- Summary
 -- ===========================================================
 print(string.format("\n%d passed, %d failed", passed, failed))

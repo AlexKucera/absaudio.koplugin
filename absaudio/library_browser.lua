@@ -772,7 +772,11 @@ function LibraryBrowserView:_onDownloadBook(item, ebook_only)
                 UIManager:scheduleIn(0.1, function()
                     nav.push("detail", {
                         item = item,
-                        on_download = function(b) self_ref:_onDownloadBook(b) end,
+                        on_download = function(data)
+                            local book_item = data.item or data
+                            local ebook_only = data.ebook_only or false
+                            self_ref:_onDownloadBook(book_item, ebook_only)
+                        end,
                         on_delete = function(b) self_ref:_onDeleteBook(b) end,
                     })
                 end)
@@ -805,7 +809,11 @@ function LibraryBrowserView:_onDownloadBook(item, ebook_only)
                     UIManager:scheduleIn(0.1, function()
                         nav.push("detail", {
                             item = item,
-                            on_download = function(b) self_ref:_onDownloadBook(b) end,
+                        on_download = function(data)
+                            local book_item = data.item or data
+                            local ebook_only = data.ebook_only or false
+                            self_ref:_onDownloadBook(book_item, ebook_only)
+                        end,
                             on_delete = function(b) self_ref:_onDeleteBook(b) end,
                         })
                     end)
@@ -889,7 +897,11 @@ function LibraryBrowserView:_onDeleteBook(item)
                 UIManager:scheduleIn(0.1, function()
                     nav.push("detail", {
                         item = item,
-                        on_download = function(b) self:_onDownloadBook(b) end,
+                        on_download = function(data)
+                            local book_item = data.item or data
+                            local ebook_only = data.ebook_only or false
+                            self:_onDownloadBook(book_item, ebook_only)
+                        end,
                         on_delete = function(b) self:_onDeleteBook(b) end,
                     })
                 end)
