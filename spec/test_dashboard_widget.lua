@@ -635,13 +635,13 @@ run_test("_onBookTap enriches item data without action callbacks", function()
     mock.assert_equals(#pushed, 1, "should have called nav.push once")
     local data = pushed[1].data
 
-    -- Detail view must have full functionality regardless of entry point
-    mock.assert_equals(type(data.on_download), "function",
-        "on_download should be a function (detail view needs download from any path)")
-    mock.assert_equals(type(data.on_delete), "function",
-        "on_delete should be a function (detail view needs delete from any path)")
-    mock.assert_equals(type(data.on_open_ebook), "function",
-        "on_open_ebook should be a function (detail view needs ebook open from any path)")
+    -- Detail view owns its behavior — no callbacks needed from caller
+    mock.assert_equals(data.on_download, nil,
+        "on_download should be nil (detail view is self-contained)")
+    mock.assert_equals(data.on_delete, nil,
+        "on_delete should be nil (detail view is self-contained)")
+    mock.assert_equals(data.on_open_ebook, nil,
+        "on_open_ebook should be nil (detail view is self-contained)")
 
     -- Item should be enriched with manifest fields
     mock.assert_equals(data.item.id, "book-456", "item.id from abs_item_id")
@@ -959,13 +959,13 @@ run_test("_onBookTap passes correct action callbacks from dashboard", function()
     mock.assert_equals(#pushed, 1, "should have called nav.push once")
     local data = pushed[1].data
 
-    -- Detail view has full functionality regardless of entry point
-    mock.assert_equals(type(data.on_download), "function",
-        "on_download should be a function")
-    mock.assert_equals(type(data.on_delete), "function",
-        "on_delete should be a function")
-    mock.assert_equals(type(data.on_open_ebook), "function",
-        "on_open_ebook should be a function")
+    -- Detail view owns its behavior — callers do NOT wire callbacks
+    mock.assert_equals(data.on_download, nil,
+        "on_download should be nil (detail is self-contained)")
+    mock.assert_equals(data.on_delete, nil,
+        "on_delete should be nil (detail is self-contained)")
+    mock.assert_equals(data.on_open_ebook, nil,
+        "on_open_ebook should be nil (detail is self-contained)")
 
     -- Item should still be enriched with manifest data for display
     mock.assert_equals(data.item.id, "book-nav-only", "item.id should still be mapped from abs_item_id")
@@ -975,45 +975,28 @@ run_test("_onBookTap passes correct action callbacks from dashboard", function()
     package.loaded["absaudio/navigator"].push = function() end
 end)
 
-run_test("DashboardView has _onDownloadBook/_onDeleteBook/_onOpenEbook using correct API", function()
+run_test("DashboardView does NOT have download/delete handlers (owned by book_detail)", function()
     local shown_widgets = {}
     local orig_show = package.loaded["ui/uimanager"].show
     package.loaded["ui/uimanager"].show = function(self, widget)
         table.insert(shown_widgets, widget)
     end
-
     dashboard.show({})
     local view = shown_widgets[#shown_widgets]
 
-    -- Methods must exist
-    mock.assert_equals(type(view._onDownloadBook), "function",
-        "_onDownloadBook should be a function")
-    mock.assert_equals(type(view._onDeleteBook), "function",
-        "_onDeleteBook should be a function")
-    mock.assert_equals(type(view._onOpenEbook), "function",
-        "_onOpenEbook should be a function")
-
-    -- Verify they use correct API (not the non-existent download_single_file)
-    local source = debug.getinfo(view._onDownloadBook).source
-    if source then
-        local f = io.open(source:sub(2), "r")
-        if f then
-            local code = f:read("*a")
-            f:close()
-            -- Must NOT contain the non-existent function call
-            local bad_calls = 0
-            for _ in code:gmatch("download_single_file") do
-                bad_calls = bad_calls + 1
-            end
-            mock.assert_equals(bad_calls, 0,
-                "_onDownloadBook must not call non-existent download_single_file")
-        end
-    end
+    -- Dashboard is navigation-only — handlers live in book_detail now
+    mock.assert_equals(view._onDownloadBook, nil,
+        "_onDownloadBook should NOT exist on dashboard (lives in book_detail)")
+    mock.assert_equals(view._onDeleteBook, nil,
+        "_onDeleteBook should NOT exist on dashboard (lives in book_detail)")
+    mock.assert_equals(view._onOpenEbook, nil,
+        "_onOpenEbook should NOT exist on dashboard (lives in book_detail)")
 
     package.loaded["ui/uimanager"].show = orig_show
 end)
 
 -- ============================================================
+-- Tests: Dashboard is navigation-only — detail view owns its behavior
 -- Summary
 -- ============================================================
 -- ============================================================

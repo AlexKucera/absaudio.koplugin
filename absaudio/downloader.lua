@@ -155,7 +155,7 @@ function downloader.prepare_download(item, manifest, config)
     end
 
     -- Filter by preferred format
-    local preferred = config:get("preferred_format") or "m4b"
+    local preferred = config.get("preferred_format") or "m4b"
     local filtered = downloader.filter_audio_files(audio_files, preferred)
 
     if existing then
@@ -211,7 +211,7 @@ function downloader.prepare_download(item, manifest, config)
     -- No existing entry — create fresh audio manifest entry
     local title = (item.media and item.media.metadata and item.media.metadata.title) or "Unknown Title"
     local author = (item.media and item.media.metadata and item.media.metadata.authorName) or "Unknown Author"
-    local download_dir = config:get("download_dir") or "/tmp/audiobooks"
+    local download_dir = config.get("download_dir") or "/tmp/audiobooks"
     local dir_name = downloader.sanitize_filename(author .. "_" .. title)
     local local_dir = download_dir .. "/" .. dir_name
 
@@ -432,7 +432,7 @@ function downloader.prepare_ebook_download(item, manifest, config)
     -- No existing entry — create fresh ebook-only manifest entry
     local title = (item.media and item.media.metadata and item.media.metadata.title) or "Unknown Title"
     local author = (item.media and item.media.metadata and item.media.metadata.authorName) or "Unknown Author"
-    local download_dir = config:get("download_dir") or "/tmp/audiobooks"
+    local download_dir = config.get("download_dir") or "/tmp/audiobooks"
     local dir_name = downloader.sanitize_filename(author .. "_" .. title)
     local local_dir = download_dir .. "/" .. dir_name
 

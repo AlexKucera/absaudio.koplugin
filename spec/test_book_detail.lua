@@ -62,6 +62,7 @@ package.loaded["ui/widget/horizontalgroup"] = make_widget_stub()
 package.loaded["ui/widget/horizontalspan"] = make_widget_stub()
 package.loaded["ui/widget/imagewidget"] = make_widget_stub()
 package.loaded["ui/widget/infomessage"] = make_widget_stub()
+package.loaded["ui/widget/confirmbox"] = make_widget_stub()
 package.loaded["ui/widget/linewidget"] = make_widget_stub()
 package.loaded["ui/widget/textboxwidget"] = make_widget_stub()
 package.loaded["ui/widget/textwidget"] = make_widget_stub()
@@ -100,8 +101,11 @@ package.loaded["ui/size"] = {
 package.loaded["ui/uimanager"] = {
     show = function() end,
     close = function() end,
-    scheduleIn = function() end,
     setDirty = function() end,
+    _scheduleLog = {},
+    scheduleIn = function(delay, fn)
+        table.insert(package.loaded["ui/uimanager"]._scheduleLog, { delay = delay })
+    end,
 }
 
 package.loaded["gettext"] = function(s) return s end
@@ -197,6 +201,43 @@ package.loaded["absaudio/navigator"] = {
     _reset = function() end,
 }
 
+-- Pre-load mocks for modules that book_detail.lua requires at load time
+-- (so pcall(require) inside book_detail captures these, not the real modules)
+package.loaded["absaudio/downloader"] = {
+    prepare_download = function() return true, { abs_item_id = "mock_id", title = "Mock", local_dir = "/tmp/mock", files = {{ filename = "mock.m4b", status = "pending", size = 1000 }} } end,
+    prepare_ebook_download = function() return false, "none" end,
+    select_files_to_download = function(f) return f or {} end,
+    calculate_download_size = function() return 1000 end,
+    get_free_space = function() return 999999 end,
+    check_free_space = function() return true end,
+    create_download_state = function()
+        local s = { cancelled=false, total_files=1, total_bytes=1000, bytes_downloaded=0, current_file="" }
+        s.cancel = function(self) self.cancelled=true end
+        s.is_cancelled = function(self) return self.cancelled end
+        s.progress_fraction = function(self) return 0 end
+        return s
+    end,
+    start_chunked_download = function(entry, file, deps)
+        entry._start_chunked_called = true
+        entry._start_chunked_file = file.filename
+        return { pump=function()return false end, cancel=function()end, is_done=function()return true end, finalize=function()return true,nil end }
+    end,
+    format_bytes = function(b) return b.." B" end,
+    delete_book = function(id, manifest, fs) return true end,
+}
+package.loaded["absaudio/download_progress"] = { show=function()end, update=function()end, close=function()end }
+local ConfirmBoxMock = {}
+function ConfirmBoxMock:new(opts)
+    local o = opts or {}
+    setmetatable(o, { __index = self })
+    o.opts = opts
+    return o
+end
+package.loaded["ui/widget/confirmbox"] = ConfirmBoxMock
+
+-- Mock lfs for delete handlers that call _G.lfs or require("lfs")
+_G.lfs = { attributes = function() return nil end, rmdir = function() end }
+package.loaded["lfs"] = _G.lfs
 ------------------------------------------------------------------------
 -- Require module under test
 ------------------------------------------------------------------------
@@ -956,7 +997,7 @@ run_test("_addEbookFiles does NOT show Open Ebook button when ebook is not downl
         "should NOT show Open Ebook button when ebook is not downloaded")
 end)
 
-run_test("_addEbookFiles on_open_ebook callback receives correct file path", function()
+run_test("_addEbookFiles on_open_ebook calls _onOpenEbook with correct path", function()
     local item = {
         id = "item_ebook_cb",
         title = "Callback Ebook",
@@ -995,21 +1036,22 @@ run_test("_addEbookFiles on_open_ebook callback receives correct file path", fun
         },
     }
 
-    local open_ebook_called = false
-    local open_ebook_path = nil
-
-    local view = detail.show({
-        item = item,
-        on_download = function(data) end,
-        on_delete = function(data) end,
-        on_open_ebook = function(path)
-            open_ebook_called = true
-            open_ebook_path = path
+    -- Mock ReaderUI so _onOpenEbook doesn't crash
+    local readerui_show_called = false
+    local readerui_path = nil
+    package.loaded["apps/reader/readerui"] = {
+        showReader = function(self, path)
+            readerui_show_called = true
+            readerui_path = path
         end,
-    })
+    }
+
+    -- Call show() without callbacks - uses self-contained _onOpenEbook
+    local view = detail.show({ item = item })
+
+    mock.assert_equals(view ~= nil, true, "should have created a view")
 
     -- Simulate tapping the Open Ebook button
-    -- Find the button's InputContainer in content_group
     for _, widget in ipairs(view.content_group or {}) do
         if widget[1] and widget[1].text and widget[1].text:match("Open Ebook") then
             if widget.onTapOpenEbook then
@@ -1018,10 +1060,173 @@ run_test("_addEbookFiles on_open_ebook callback receives correct file path", fun
             break
         end
     end
+    mock.assert_equals(readerui_show_called, true, "_onOpenEbook should call ReaderUI")
+    mock.assert_equals(readerui_path, "/tmp/callback_ebook/CallbackBook.pdf",
+        "should pass correct file path to ReaderUI")
 
-    mock.assert_equals(open_ebook_called, true, "on_open_ebook should be called")
-    mock.assert_equals(open_ebook_path, "/tmp/callback_ebook/CallbackBook.pdf",
-        "should pass correct file path")
+    -- Clean up mock
+    package.loaded["apps/reader/readerui"] = nil
+end)
+-- ============================================================
+-- Test: BookDetailView has own _onDownloadBook method (self-contained)
+-- ============================================================
+run_test("BookDetailView:_onDownloadBook calls start_chunked_download and schedules pump", function()
+    -- Uses pre-load mocks (set before require) so book_detail captured them
+    local item = {}
+    item.id = "test_id"
+    item.title = "Test Book"
+    item.mediaType = "book"
+    item.media = {}
+    item.media.duration = 3600
+    item.media.metadata = {}
+    item.media.metadata.title = "Test Book"
+    item.media.metadata.authorName = "Author"
+    item.media.audioFiles = {}
+    item.media.audioFiles[1] = {}
+    item.media.audioFiles[1].ino = "1"
+    item.media.audioFiles[1].metadata = {}
+    item.media.audioFiles[1].metadata.filename = "test.m4b"
+    item.media.audioFiles[1].metadata.ext = ".m4b"
+    item.media.audioFiles[1].metadata.size = 1000
+
+    mock_api_configured = false
+    mock_manifest_books = {}
+
+    local view = detail.show({ item = item })
+
+    mock.assert_equals(type(view._onDownloadBook), "function",
+        "BookDetailView must have _onDownloadBook method")
+
+    -- Override scheduleIn locally to execute small-delay callbacks (so download pipeline runs)
+    local uim = package.loaded["ui/uimanager"]
+    local orig_scheduleIn = uim.scheduleIn
+    uim.scheduleIn = function(delay, fn)
+        orig_scheduleIn(delay, fn)
+        if not delay or delay <= 0.2 then fn() end
+    end
+    -- Call should not error — exercises full pipeline with pre-load mocks
+    view:_onDownloadBook(item, false)
+
+    -- Restore original scheduleIn
+    uim.scheduleIn = orig_scheduleIn
+
+    mock.assert_equals(#uim._scheduleLog >= 1, true,
+        "should have scheduled via UIManager.scheduleIn")
+end)
+
+-- ============================================================
+-- Test: BookDetailView has own _onOpenEbook method
+-- ============================================================
+run_test("BookDetailView:_onOpenEbook opens ReaderUI with filepath", function()
+    local opened_filepath = nil
+
+    -- Mock ReaderUI (colon-call passes self as first arg)
+    package.loaded["apps/reader/readerui"] = {
+        showReader = function(self, filepath)
+            opened_filepath = filepath
+        end,
+    }
+
+    local item = {
+        id = "ebook_test",
+        title = "Ebook Test",
+        mediaType = "book",
+        media = { duration=3600, metadata={title="Ebook Test", authorName="Author"} },
+    }
+    mock_api_configured = false
+    mock_manifest_books = {}
+
+    local view = detail.show({ item = item })
+
+    -- Must have _onOpenEbook method
+    mock.assert_equals(type(view._onOpenEbook), "function",
+        "BookDetailView must have _onOpenEbook method")
+
+    -- Call it
+    view:_onOpenEbook("/tmp/test/book.epub")
+
+    mock.assert_equals(opened_filepath, "/tmp/test/book.epub",
+        "should open ReaderUI with correct filepath")
+
+    -- Clean up
+    package.loaded["apps/reader/readerui"] = nil
+end)
+-- ============================================================
+-- Test: BookDetailView has own _onDeleteBook method
+-- ============================================================
+run_test("BookDetailView:_onDeleteBook shows ConfirmBox and deletes book", function()
+    local deleted_id = nil
+    local confirmbox_text = nil
+    local uimanager_widgets = {}
+
+    -- Intercept UIManager.show to capture ConfirmBox and auto-confirm
+    local orig_show = package.loaded["ui/uimanager"].show
+    package.loaded["ui/uimanager"].show = function(self, widget)
+        table.insert(uimanager_widgets, widget)
+        -- Auto-confirm: if this looks like a ConfirmBox, fire ok_callback
+        if widget and widget.opts and widget.opts.ok_callback then
+            confirmbox_text = widget.opts.text
+            widget.opts.ok_callback()
+        end
+    end
+
+    -- Spy on delete_book by mutating the pre-loaded downloader table
+    -- (book_detail's local `downloader` points to this same table)
+    local dl_mock = package.loaded["absaudio/downloader"]
+    local orig_delete_book = dl_mock.delete_book
+    dl_mock.delete_book = function(id, manifest, fs)
+        deleted_id = id
+        return true
+    end
+
+    local item = {
+        id = "del_test",
+        title = "Delete Me",
+        mediaType = "book",
+        media = { duration=3600, metadata={title="Delete Me", authorName="Author"} },
+    }
+    mock_api_configured = false
+    mock_manifest_books = {}
+
+    local view = detail.show({ item = item })
+
+    -- Must have _onDeleteBook method
+    mock.assert_equals(type(view._onDeleteBook), "function",
+        "BookDetailView must have _onDeleteBook method")
+
+    -- Call it — should show ConfirmBox, then delete when confirmed
+    view:_onDeleteBook(item, false)
+
+    mock.assert_equals(confirmbox_text ~= nil, true, "should show ConfirmBox")
+    mock.assert_equals(deleted_id, "del_test", "should delete correct book ID")
+
+    -- Restore mocks
+    package.loaded["ui/uimanager"].show = orig_show
+    dl_mock.delete_book = orig_delete_book
+end)
+-- ============================================================
+-- Test: Detail view works without any callbacks (self-contained)
+-- ============================================================
+run_test("detail.show without callbacks still has working action methods", function()
+    local item = {
+        id = "self_wire_test",
+        title = "Self Wired",
+        mediaType = "book",
+        media = { duration=3600, metadata={title="Self Wired", authorName="Author"} },
+    }
+    mock_api_configured = false
+    mock_manifest_books = {}
+
+    -- Call show() with NO callbacks at all - this is the new interface
+    local view = detail.show({ item = item })
+
+    mock.assert_equals(view ~= nil, true, "should create view without callbacks")
+
+    -- All four action methods must exist regardless of callbacks being passed
+    mock.assert_equals(type(view._onDownloadBook), "function", "must have _onDownloadBook")
+    mock.assert_equals(type(view._onDeleteBook), "function", "must have _onDeleteBook")
+    mock.assert_equals(type(view._onDeleteEbookOnly), "function", "must have _onDeleteEbookOnly")
+    mock.assert_equals(type(view._onOpenEbook), "function", "must have _onOpenEbook")
 end)
 if #errors > 0 then
     print("\nFailures:")

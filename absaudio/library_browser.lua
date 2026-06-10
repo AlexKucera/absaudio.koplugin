@@ -590,20 +590,6 @@ function LibraryBrowserView:onBookTap(item)
     if has_navigator then
         nav.push("detail", {
             item = item,
-            on_download = function(data)
-                -- data may be a plain item or { item=..., ebook_only=true }
-                local book_item = data.item or data
-                local ebook_only = data.ebook_only or false
-                self:_onDownloadBook(book_item, ebook_only)
-            end,
-            on_delete = function(data)
-                local book_item = data.item or data
-                local ebook_only = data.ebook_only or false
-                self:_onDeleteBook(book_item, ebook_only)
-            end,
-            on_open_ebook = function(filepath)
-                self:_onOpenEbook(filepath)
-            end,
         })
     end
     return true

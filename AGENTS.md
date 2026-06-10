@@ -60,6 +60,7 @@ They capture what was done, decisions & rationale, gotchas & fixes, and next ste
 
 | Date | Type | File | Summary |
 |------|------|------|----------|
+| 2026-06-10 | issue | [pr22-review-findings-self-contained-book-detail_log.md](docs/devlog/20260610-pr22-review-findings-self-contained-book-detail_log.md) | Made BookDetailView own its download/delete/ebook behavior; fixed all 4 PR #22 review bugs (coroutine discard, self_ref nil, ConfirmBox missing, config:get colon-call); removed ~290 lines dead/duplicated code from dashboard+library_browser; 322 tests pass |
 | 2026-06-10 | generic | [dashboard-cover-images_log.md](docs/devlog/20260610-dashboard-cover-images_log.md) | Added cover thumbnails (80×100) to dashboard resume + downloaded books sections; `_buildBookRow()` helper matching library browser layout; gray 🎵 placeholder fallback; 4 new tests; 326 total pass |
 | 2026-06-10 | generic | [fix-dashboard-detail-view-missing-action-buttons_log.md](docs/devlog/202610-fix-dashboard-detail-view-missing-action-buttons_log.md) | Dashboard→detail now matches library→detail; wired on_download/on_delete/on_open_ebook callbacks + enriched item data from manifest; added 3 handler methods to DashboardView; 322 tests pass |
 | 2026-06-10 | generic | [fix-dashboard-book-tap-cover-cache-nil-crash_log.md](docs/devlog/20260610-fix-dashboard-book-tap-cover-cache-nil-crash_log.md) | Fixed crash on dashboard book tap; added `cover_cache.init()` to `detail.prepare()` with idempotent guard; 311 tests pass |

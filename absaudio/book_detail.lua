@@ -45,6 +45,10 @@ local has_api, api = pcall(require, "api")
 local has_cover_cache, cover_cache = pcall(require, "absaudio/cover_cache")
 local library_store = require("absaudio/library_store")
 local has_navigator, nav = pcall(require, "absaudio/navigator")
+local has_downloader, downloader = pcall(require, "absaudio/downloader")
+local has_abs_config, abs_config = pcall(require, "absaudio/config")
+local has_progress, progress = pcall(require, "absaudio/download_progress")
+local ConfirmBox = require("ui/widget/confirmbox")
 
 local detail = {}
 
@@ -421,6 +425,7 @@ function BookDetailView:_addDownloadStatus()
 end
 
 ------------------------------------------------------------------------
+------------------------------------------------------------------------
 -- Audio download status sub-section
 ------------------------------------------------------------------------
 function BookDetailView:_addAudioDownloadStatus(audio_state)
@@ -435,35 +440,34 @@ function BookDetailView:_addAudioDownloadStatus(audio_state)
         }
         table.insert(self.content_group, badge)
 
-        -- Show Delete button
-        if self.on_delete then
-            table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
-            local delete_btn = TextWidget:new{
-                text = _("🗑 Delete audio"),
-                face = Font:getFace("cfont", 16),
-                fgcolor = Blitbuffer.COLOR_DARK_GRAY,
-            }
-            local tap_container = InputContainer:new{
-                dimen = Geom:new{
-                    w = self.content_width,
-                    h = delete_btn:getSize().h + Size.padding.default,
-                },
-            }
-            tap_container.ges_events.TapDelete = {
-                GestureRange:new{
-                    ges = "tap",
-                    range = tap_container.dimen,
-                },
-            }
-            local item = self.item
-            local on_delete_cb = self.on_delete
-            function tap_container:onTapDelete()
-                if on_delete_cb then on_delete_cb({ item = item, ebook_only = false }) end
-                return true
-            end
-            tap_container[1] = delete_btn
-            table.insert(self.content_group, tap_container)
+        -- Show Delete button (self-contained _onDeleteBook)
+        table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
+        local delete_btn = TextWidget:new{
+            text = _("🗑 Delete audio"),
+            face = Font:getFace("cfont", 16),
+            fgcolor = Blitbuffer.COLOR_DARK_GRAY,
+        }
+        local tap_container = InputContainer:new{
+            dimen = Geom:new{
+                w = self.content_width,
+                h = delete_btn:getSize().h + Size.padding.default,
+            },
+        }
+        tap_container.ges_events.TapDelete = {
+            GestureRange:new{
+                ges = "tap",
+                range = tap_container.dimen,
+            },
+        }
+        tap_container.detail_ref = self.detail_ref
+        tap_container.captured_item = self.item
+        function tap_container:onTapDelete()
+            self.detail_ref:_onDeleteBook(self.captured_item, false)
+            return true
         end
+        tap_container[1] = delete_btn
+        table.insert(self.content_group, tap_container)
+
     elseif audio_state == "incomplete" then
         -- Audio incomplete
         local badge = TextWidget:new{
@@ -473,64 +477,62 @@ function BookDetailView:_addAudioDownloadStatus(audio_state)
         }
         table.insert(self.content_group, badge)
 
-        -- Show Resume + Delete buttons
-        if self.on_download then
-            table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
-            local resume_btn = TextWidget:new{
-                text = _("⬇ Resume audio"),
-                face = Font:getFace("cfont", 16),
-                fgcolor = Blitbuffer.COLOR_BLUE,
-            }
-            local tap_container = InputContainer:new{
-                dimen = Geom:new{
-                    w = self.content_width,
-                    h = resume_btn:getSize().h + Size.padding.default,
-                },
-            }
-            tap_container.ges_events.TapResume = {
-                GestureRange:new{
-                    ges = "tap",
-                    range = tap_container.dimen,
-                },
-            }
-            local item = self.item
-            local on_download_cb = self.on_download
-            function tap_container:onTapResume()
-                if on_download_cb then on_download_cb(item) end
-                return true
-            end
-            tap_container[1] = resume_btn
-            table.insert(self.content_group, tap_container)
+        -- Show Resume button (self-contained _onDownloadBook)
+        table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
+        local resume_btn = TextWidget:new{
+            text = _("⬇ Resume audio"),
+            face = Font:getFace("cfont", 16),
+            fgcolor = Blitbuffer.COLOR_BLUE,
+        }
+        local tap_container = InputContainer:new{
+            dimen = Geom:new{
+                w = self.content_width,
+                h = resume_btn:getSize().h + Size.padding.default,
+            },
+        }
+        tap_container.ges_events.TapResume = {
+            GestureRange:new{
+                ges = "tap",
+                range = tap_container.dimen,
+            },
+        }
+        tap_container.detail_ref = self.detail_ref
+        tap_container.captured_item = self.item
+        function tap_container:onTapResume()
+            self.detail_ref:_onDownloadBook(self.captured_item)
+            return true
         end
+        tap_container[1] = resume_btn
+        table.insert(self.content_group, tap_container)
 
-        if self.on_delete then
-            table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
-            local delete_btn = TextWidget:new{
-                text = _("🗑 Delete audio"),
-                face = Font:getFace("cfont", 16),
-                fgcolor = Blitbuffer.COLOR_DARK_GRAY,
-            }
-            local tap_container = InputContainer:new{
-                dimen = Geom:new{
-                    w = self.content_width,
-                    h = delete_btn:getSize().h + Size.padding.default,
-                },
-            }
-            tap_container.ges_events.TapDelete = {
-                GestureRange:new{
-                    ges = "tap",
-                    range = tap_container.dimen,
-                },
-            }
-            local item = self.item
-            local on_delete_cb = self.on_delete
-            function tap_container:onTapDelete()
-                if on_delete_cb then on_delete_cb({ item = item, ebook_only = false }) end
-                return true
-            end
-            tap_container[1] = delete_btn
-            table.insert(self.content_group, tap_container)
+        -- Show Delete button (self-contained _onDeleteBook)
+        table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
+        local delete_btn = TextWidget:new{
+            text = _("🗑 Delete audio"),
+            face = Font:getFace("cfont", 16),
+            fgcolor = Blitbuffer.COLOR_DARK_GRAY,
+        }
+        local tap_container = InputContainer:new{
+            dimen = Geom:new{
+                w = self.content_width,
+                h = delete_btn:getSize().h + Size.padding.default,
+            },
+        }
+        tap_container.ges_events.TapDelete = {
+            GestureRange:new{
+                ges = "tap",
+                range = tap_container.dimen,
+            },
+        }
+        tap_container.detail_ref = self.detail_ref
+        tap_container.captured_item = self.item
+        function tap_container:onTapDelete()
+            self.detail_ref:_onDeleteBook(self.captured_item, false)
+            return true
         end
+        tap_container[1] = delete_btn
+        table.insert(self.content_group, tap_container)
+
     else
         -- Audio not downloaded
         local badge = TextWidget:new{
@@ -540,35 +542,33 @@ function BookDetailView:_addAudioDownloadStatus(audio_state)
         }
         table.insert(self.content_group, badge)
 
-        -- Show download button if callback provided
-        if self.on_download then
-            table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
-            local download_btn = TextWidget:new{
-                text = _("⬇ Download audio"),
-                face = Font:getFace("cfont", 16),
-                fgcolor = Blitbuffer.COLOR_BLUE,
-            }
-            local tap_container = InputContainer:new{
-                dimen = Geom:new{
-                    w = self.content_width,
-                    h = download_btn:getSize().h + Size.padding.default,
-                },
-            }
-            tap_container.ges_events.TapDownload = {
-                GestureRange:new{
-                    ges = "tap",
-                    range = tap_container.dimen,
-                },
-            }
-            local item = self.item
-            local on_download_cb = self.on_download
-            function tap_container:onTapDownload()
-                if on_download_cb then on_download_cb(item) end
-                return true
-            end
-            tap_container[1] = download_btn
-            table.insert(self.content_group, tap_container)
+        -- Show download button (self-contained _onDownloadBook)
+        table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
+        local download_btn = TextWidget:new{
+            text = _("⬇ Download audio"),
+            face = Font:getFace("cfont", 16),
+            fgcolor = Blitbuffer.COLOR_BLUE,
+        }
+        local tap_container = InputContainer:new{
+            dimen = Geom:new{
+                w = self.content_width,
+                h = download_btn:getSize().h + Size.padding.default,
+            },
+        }
+        tap_container.ges_events.TapDownload = {
+            GestureRange:new{
+                ges = "tap",
+                range = tap_container.dimen,
+            },
+        }
+        tap_container.detail_ref = self.detail_ref
+        tap_container.captured_item = self.item
+        function tap_container:onTapDownload()
+            self.detail_ref:_onDownloadBook(self.captured_item)
+            return true
         end
+        tap_container[1] = download_btn
+        table.insert(self.content_group, tap_container)
     end
 
     table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
@@ -710,8 +710,8 @@ function BookDetailView:_addEbookFiles(ebook_files)
             end
         end
 
-        -- Open Ebook button
-        if ebook_path and self.on_open_ebook then
+        -- Open Ebook button (always when path exists - self-contained _onOpenEbook)
+        if ebook_path then
             table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
             local open_btn = TextWidget:new{
                 text = _("Open Ebook"),
@@ -730,46 +730,44 @@ function BookDetailView:_addEbookFiles(ebook_files)
                     range = open_container.dimen,
                 },
             }
-            local on_open_ebook_cb = self.on_open_ebook
+            open_container.detail_ref = self.detail_ref
+            open_container.captured_ebook_path = ebook_path
             function open_container:onTapOpenEbook()
-                if on_open_ebook_cb then on_open_ebook_cb(ebook_path) end
+                self.detail_ref:_onOpenEbook(self.captured_ebook_path)
                 return true
             end
             open_container[1] = open_btn
             table.insert(self.content_group, open_container)
         end
-
-        -- Delete button
-        if self.on_delete then
-            table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
-            local delete_btn = TextWidget:new{
-                text = _("Delete ebook"),
-                face = Font:getFace("cfont", 16),
-                fgcolor = Blitbuffer.COLOR_DARK_GRAY,
-            }
-            local tap_container = InputContainer:new{
-                dimen = Geom:new{
-                    w = self.content_width,
-                    h = delete_btn:getSize().h + Size.padding.default,
-                },
-            }
-            tap_container.ges_events.TapDeleteEbook = {
-                GestureRange:new{
-                    ges = "tap",
-                    range = tap_container.dimen,
-                },
-            }
-            local item = self.item
-            local on_delete_cb = self.on_delete
-            function tap_container:onTapDeleteEbook()
-                if on_delete_cb then on_delete_cb({ item = item, ebook_only = true }) end
-                return true
-            end
-            tap_container[1] = delete_btn
-            table.insert(self.content_group, tap_container)
+        -- Delete ebook button (self-contained _onDeleteBook)
+        table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
+        local delete_btn = TextWidget:new{
+            text = _("Delete ebook"),
+            face = Font:getFace("cfont", 16),
+            fgcolor = Blitbuffer.COLOR_DARK_GRAY,
+        }
+        local tap_container = InputContainer:new{
+            dimen = Geom:new{
+                w = self.content_width,
+                h = delete_btn:getSize().h + Size.padding.default,
+            },
+        }
+        tap_container.ges_events.TapDeleteEbook = {
+            GestureRange:new{
+                ges = "tap",
+                range = tap_container.dimen,
+            },
+        }
+        tap_container.detail_ref = self.detail_ref
+        tap_container.captured_item = self.item
+        function tap_container:onTapDeleteEbook()
+            self.detail_ref:_onDeleteBook(self.captured_item, true)
+            return true
         end
-    elseif self.on_download then
-        -- Not all ebooks downloaded — show download/resume button
+        tap_container[1] = delete_btn
+        table.insert(self.content_group, tap_container)
+    else
+        -- Not all ebooks downloaded — show download/resume button (self-contained _onDownloadBook)
         table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
         local btn_label = any_ebook_incomplete and _("⬇ Resume ebook") or _("⬇ Download Ebook")
         local ebook_btn = TextWidget:new{
@@ -789,12 +787,10 @@ function BookDetailView:_addEbookFiles(ebook_files)
                 range = tap_container.dimen,
             },
         }
-        local item = self.item
-        local on_download_cb = self.on_download
+        tap_container.detail_ref = self.detail_ref
+        tap_container.captured_item = self.item
         function tap_container:onTapEbook()
-            if on_download_cb then
-                on_download_cb({ item = item, ebook_only = true })
-            end
+            self.detail_ref:_onDownloadBook(self.captured_item, true)
             return true
         end
         tap_container[1] = ebook_btn
@@ -856,6 +852,268 @@ function BookDetailView:_addChapters(chapters)
     table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.default })
 end
 
+------------------------------------------------------------------------
+-- Download handler — self-contained on BookDetailView
+-- Mirrors library_browser:_onDownloadBook but uses self directly (no self_ref).
+------------------------------------------------------------------------
+function BookDetailView:_onDownloadBook(item, ebook_only)
+    abs_logger.info("Detail download requested: " .. (item.title or item.id)
+        .. (ebook_only and " (ebook)" or ""))
+    if not has_manifest or not has_config or not has_downloader then
+        UIManager:show(InfoMessage:new{ text = _("Download not available") })
+        return
+    end
+    manifest.init()
+
+    local result = nil
+
+    if ebook_only then
+        local ok, ebook_result = downloader.prepare_ebook_download(item, manifest, config)
+        if not ok then
+            UIManager:show(InfoMessage:new{
+                text = _("No ebook files found for this book."),
+                timeout = 3,
+            })
+            return
+        end
+        result = ebook_result
+    else
+        local existing_entry = manifest.getBook(item.id)
+        if existing_entry and manifest.hasIncompleteFiles(item.id) then
+            abs_logger.info("Resuming incomplete download: " .. (item.title or item.id))
+            result = existing_entry
+        else
+            local ok, prepare_result = downloader.prepare_download(item, manifest, config)
+            if not ok then
+                if prepare_result == "already_downloaded" then
+                    UIManager:show(ConfirmBox:new{
+                        text = _("Already downloaded. Re-download?"),
+                        ok_text = _("Re-download"),
+                        ok_callback = function()
+                            local lfs_mod = _G.lfs or require("lfs")
+                            local fs_del = {
+                                delete_file = function(path) os.remove(path) end,
+                                delete_dir = function(path) lfs_mod.rmdir(path) end,
+                            }
+                            downloader.delete_book(item.id, manifest, fs_del)
+                            self:_onDownloadBook(item)
+                        end,
+                    })
+                else
+                    UIManager:show(InfoMessage:new{ text = _("No audio files found for this book.") })
+                end
+                return
+            end
+            result = prepare_result
+        end
+    end
+
+    -- Free space check
+    local total_sizes = downloader.calculate_download_size(result.files)
+    local needed = total_sizes
+    if needed > 0 then
+        local dl_dir = abs_config.get("download_dir") or "/tmp"
+        local free_bytes = downloader.get_free_space(dl_dir)
+        if free_bytes and not downloader.check_free_space(needed, free_bytes) then
+            UIManager:show(InfoMessage:new{
+                text = string.format(_("Insufficient disk space. Need %s, have %s."),
+                    downloader.format_bytes(needed), downloader.format_bytes(free_bytes)),
+                timeout = 5,
+            })
+            return
+        end
+    end
+    -- Download state + progress widget
+    local state = downloader.create_download_state()
+    state.start_time = os.time()
+    state.total_files = #result.files
+    state.total_bytes = total_sizes
+
+    if has_progress then
+        progress.show({
+            state = state,
+            on_cancel = function() state:cancel() end,
+        })
+    end
+    -- Build filesystem deps
+    local lfs_mod = _G.lfs or require("lfs")
+    local deps = {
+        manifest = manifest,
+        api = require("api"),
+        fs = {
+            mkdir = function(path)
+                local parts = {}
+                for part in path:gmatch("[^/]+)") do
+                    table.insert(parts, part)
+                end
+                local current = ""
+                for _, part in ipairs(parts) do
+                    current = current .. "/" .. part
+                    if not lfs_mod.attributes(current) then
+                        lfs_mod.mkdir(current)
+                    end
+                end
+            end,
+            open = function(path, mode) return io.open(path, mode) end,
+            get_file_size = function(path)
+                local attr = lfs_mod.attributes(path)
+                return attr and attr.size or nil
+            end,
+        },
+        state = state,
+    }
+
+    local files_to_download = downloader.select_files_to_download(result.files)
+    local entry = result
+
+    local function schedule_next(idx)
+        if idx > #files_to_download or state:is_cancelled() then
+            if has_progress then progress.close() end
+            local msg = state:is_cancelled()
+                and _("Download cancelled.")
+                or _("Download complete!")
+            UIManager:show(InfoMessage:new{ text = msg, timeout = 3 })
+            if has_navigator then
+                nav.pop()
+                UIManager:scheduleIn(0.1, function()
+                    nav.push("detail", { item = item })
+                end)
+            end
+            return
+        end
+        local file = files_to_download[idx]
+        state.current_file = idx
+
+        local handle, err = downloader.start_chunked_download(entry, file, deps)
+        if not handle then
+            if has_progress then progress.close() end
+            UIManager:show(InfoMessage:new{
+                text = _("Download failed: ") .. tostring(err),
+                timeout = 5,
+            })
+            return
+        end
+        local function pump()
+            if state:is_cancelled() then
+                handle:cancel()
+                handle:finalize()
+                if has_progress then progress.close() end
+                UIManager:show(InfoMessage:new{ text = _("Download cancelled."), timeout = 3 })
+                if has_navigator then
+                    nav.pop()
+                    UIManager:scheduleIn(0.1, function()
+                        nav.push("detail", { item = item })
+                    end)
+                end
+                return
+            end
+            local still_running = handle:pump()
+            if has_progress then progress.update(state) end
+
+            if still_running then
+                UIManager:scheduleIn(0.05, pump)
+            else
+                local ok_final, reason = handle:finalize()
+                if not ok_final then
+                    if has_progress then progress.close() end
+                    UIManager:show(InfoMessage:new{
+                        text = _("Download failed: ") .. tostring(reason),
+                        timeout = 5,
+                    })
+                    return
+                end
+                UIManager:scheduleIn(0.05, function()
+                    schedule_next(idx + 1)
+                end)
+            end
+        end
+        UIManager:scheduleIn(0.05, pump)
+    end
+    UIManager:scheduleIn(0.1, function() schedule_next(1) end)
+end
+
+------------------------------------------------------------------------
+-- Delete handler — self-contained on BookDetailView
+-- Mirrors library_browser:_onDeleteBook but uses self directly (no self_ref).
+------------------------------------------------------------------------
+function BookDetailView:_onDeleteBook(item, ebook_only)
+    abs_logger.info("Detail delete requested: " .. (item.title or item.id)
+        .. (ebook_only and " (ebook only)" or ""))
+    if not has_manifest or not has_downloader then
+        UIManager:show(InfoMessage:new{ text = _("Delete not available") })
+        return
+    end
+    manifest.init()
+
+    if ebook_only then
+        self:_onDeleteEbookOnly(item)
+        return
+    end
+
+    UIManager:show(ConfirmBox:new{
+        text = _("Delete this downloaded book?"),
+        ok_text = _("Delete"),
+        ok_callback = function()
+            local lfs_mod = _G.lfs or require("lfs")
+            local fs = {
+                delete_file = function(path) os.remove(path) end,
+                delete_dir = function(path) lfs_mod.rmdir(path) end,
+            }
+            local ok = downloader.delete_book(item.id, manifest, fs)
+            if ok then
+                UIManager:show(InfoMessage:new{ text = _("Book deleted successfully."), timeout = 3 })
+            else
+                UIManager:show(InfoMessage:new{ text = _("Book not found in downloads."), timeout = 3 })
+            end
+            -- Refresh detail view by popping and re-pushing (no callbacks needed)
+            if has_navigator then
+                nav.pop()
+                UIManager:scheduleIn(0.1, function()
+                    nav.push("detail", { item = item })
+                end)
+            end
+        end,
+    })
+end
+
+------------------------------------------------------------------------
+-- Ebook-only delete helper — removes ebook files, preserves audio
+------------------------------------------------------------------------
+function BookDetailView:_onDeleteEbookOnly(item)
+    local entry = manifest.getBook(item.id)
+    if not entry or not entry.files then return end
+
+    local lfs_mod = _G.lfs or require("lfs")
+    for _, f in ipairs(entry.files) do
+        if f.type == "ebook" then
+            local path = entry.local_dir .. "/" .. f.filename
+            if lfs_mod.attributes(path) then
+                os.remove(path)
+            end
+            f.status = nil
+        end
+    end
+    manifest.flush()
+    UIManager:show(InfoMessage:new{ text = _("Ebook deleted."), timeout = 2 })
+
+    -- Refresh detail view (no callbacks needed)
+    if has_navigator then
+        nav.pop()
+        UIManager:scheduleIn(0.1, function()
+            nav.push("detail", { item = item })
+        end)
+    end
+end
+
+------------------------------------------------------------------------
+-- Open ebook in KOReader's ReaderUI
+-- Self-contained: no callback needed from caller.
+------------------------------------------------------------------------
+function BookDetailView:_onOpenEbook(filepath)
+    abs_logger.info("Detail opening ebook: " .. tostring(filepath))
+    local ReaderUI = require("apps/reader/readerui")
+    ReaderUI:showReader(filepath)
+end
 ------------------------------------------------------------------------
 -- Close / navigation
 ------------------------------------------------------------------------
