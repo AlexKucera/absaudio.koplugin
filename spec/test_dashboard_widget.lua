@@ -603,9 +603,9 @@ run_test("_onBookTap pushes 'detail' screen with item.id mapped from abs_item_id
 end)
 
 
--- Test: _onBookTap wires download/delete/open callbacks and enriches item data
+-- Test: _onBookTap enriches item data but does NOT wire action callbacks
 -- ============================================================
-run_test("_onBookTap passes on_download/on_delete/on_open_ebook callbacks", function()
+run_test("_onBookTap enriches item data without action callbacks", function()
     local pushed = {}
     package.loaded["absaudio/navigator"].push = function(name, data)
         table.insert(pushed, { name = name, data = data })
@@ -635,10 +635,13 @@ run_test("_onBookTap passes on_download/on_delete/on_open_ebook callbacks", func
     mock.assert_equals(#pushed, 1, "should have called nav.push once")
     local data = pushed[1].data
 
-    -- Callbacks must be present (functions)
-    mock.assert_equals(type(data.on_download), "function", "on_download should be a function")
-    mock.assert_equals(type(data.on_delete), "function", "on_delete should be a function")
-    mock.assert_equals(type(data.on_open_ebook), "function", "on_open_ebook should be a function")
+    -- Detail view must have full functionality regardless of entry point
+    mock.assert_equals(type(data.on_download), "function",
+        "on_download should be a function (detail view needs download from any path)")
+    mock.assert_equals(type(data.on_delete), "function",
+        "on_delete should be a function (detail view needs delete from any path)")
+    mock.assert_equals(type(data.on_open_ebook), "function",
+        "on_open_ebook should be a function (detail view needs ebook open from any path)")
 
     -- Item should be enriched with manifest fields
     mock.assert_equals(data.item.id, "book-456", "item.id from abs_item_id")
@@ -917,6 +920,95 @@ run_test("book without abs_item_id renders placeholder without crash", function(
     local layout = tap_containers[1][1]
     local is_hg_layout = type(layout) == "table" and layout.align == "center"
     mock.assert_equals(is_hg_layout, true, "legacy book entry should still use HorizontalGroup layout")
+
+    package.loaded["ui/uimanager"].show = orig_show
+end)
+
+
+-- ============================================================
+-- Tests: Dashboard is navigation-only — no download/delete handlers
+-- ============================================================
+
+run_test("_onBookTap passes correct action callbacks from dashboard", function()
+    local pushed = {}
+    package.loaded["absaudio/navigator"].push = function(name, data)
+        table.insert(pushed, { name = name, data = data })
+    end
+
+    local shown_widgets = {}
+    local orig_show = package.loaded["ui/uimanager"].show
+    package.loaded["ui/uimanager"].show = function(self, widget)
+        table.insert(shown_widgets, widget)
+    end
+
+    dashboard.show({})
+    local view = shown_widgets[#shown_widgets]
+
+    -- Book with full manifest data
+    local book = {
+        abs_item_id = "book-nav-only",
+        title = "Nav Only Book",
+        author = "Nav Author",
+        duration = 3600,
+        chapters = { { title = "Ch1", start = 0, ["end"] = 1800 } },
+        files = {{ filename = "test.mp3", type = "audio", status = "complete" }},
+        local_dir = "/tmp/books/nav_only",
+    }
+    view:_onBookTap(book)
+
+    mock.assert_equals(#pushed, 1, "should have called nav.push once")
+    local data = pushed[1].data
+
+    -- Detail view has full functionality regardless of entry point
+    mock.assert_equals(type(data.on_download), "function",
+        "on_download should be a function")
+    mock.assert_equals(type(data.on_delete), "function",
+        "on_delete should be a function")
+    mock.assert_equals(type(data.on_open_ebook), "function",
+        "on_open_ebook should be a function")
+
+    -- Item should still be enriched with manifest data for display
+    mock.assert_equals(data.item.id, "book-nav-only", "item.id should still be mapped from abs_item_id")
+    mock.assert_equals(data.item.title, "Nav Only Book", "title should still be passed through")
+
+    package.loaded["ui/uimanager"].show = orig_show
+    package.loaded["absaudio/navigator"].push = function() end
+end)
+
+run_test("DashboardView has _onDownloadBook/_onDeleteBook/_onOpenEbook using correct API", function()
+    local shown_widgets = {}
+    local orig_show = package.loaded["ui/uimanager"].show
+    package.loaded["ui/uimanager"].show = function(self, widget)
+        table.insert(shown_widgets, widget)
+    end
+
+    dashboard.show({})
+    local view = shown_widgets[#shown_widgets]
+
+    -- Methods must exist
+    mock.assert_equals(type(view._onDownloadBook), "function",
+        "_onDownloadBook should be a function")
+    mock.assert_equals(type(view._onDeleteBook), "function",
+        "_onDeleteBook should be a function")
+    mock.assert_equals(type(view._onOpenEbook), "function",
+        "_onOpenEbook should be a function")
+
+    -- Verify they use correct API (not the non-existent download_single_file)
+    local source = debug.getinfo(view._onDownloadBook).source
+    if source then
+        local f = io.open(source:sub(2), "r")
+        if f then
+            local code = f:read("*a")
+            f:close()
+            -- Must NOT contain the non-existent function call
+            local bad_calls = 0
+            for _ in code:gmatch("download_single_file") do
+                bad_calls = bad_calls + 1
+            end
+            mock.assert_equals(bad_calls, 0,
+                "_onDownloadBook must not call non-existent download_single_file")
+        end
+    end
 
     package.loaded["ui/uimanager"].show = orig_show
 end)

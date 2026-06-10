@@ -63,7 +63,8 @@ They capture what was done, decisions & rationale, gotchas & fixes, and next ste
 | 2026-06-10 | generic | [dashboard-cover-images_log.md](docs/devlog/20260610-dashboard-cover-images_log.md) | Added cover thumbnails (80×100) to dashboard resume + downloaded books sections; `_buildBookRow()` helper matching library browser layout; gray 🎵 placeholder fallback; 4 new tests; 326 total pass |
 | 2026-06-10 | generic | [fix-dashboard-detail-view-missing-action-buttons_log.md](docs/devlog/202610-fix-dashboard-detail-view-missing-action-buttons_log.md) | Dashboard→detail now matches library→detail; wired on_download/on_delete/on_open_ebook callbacks + enriched item data from manifest; added 3 handler methods to DashboardView; 322 tests pass |
 | 2026-06-10 | generic | [fix-dashboard-book-tap-cover-cache-nil-crash_log.md](docs/devlog/20260610-fix-dashboard-book-tap-cover-cache-nil-crash_log.md) | Fixed crash on dashboard book tap; added `cover_cache.init()` to `detail.prepare()` with idempotent guard; 311 tests pass |
-| 2026-06-10 | issue | [fix-ebook-cancel-redownload-crash-nil-id_log.md](docs/devlog/20260610-fix-ebook-cancel-redownload-crash-nil-id_log.md) | Fixed crash on ebook re-download after cancel; unwrapped `{item, ebook_only}` envelope in 3 re-push callbacks; 15 library_browser tests pass |
+| 2026-06-10 | generic | [fix-dashboard-download-handlers-crash_log.md](docs/devlog/202610-fix-dashboard-download-handlers-crash_log.md) | Fixed PR review bugs: non-existent `download_single_file`, wrong arg order; rewrote dashboard handlers with correct API (`start_chunked_download`); fixed config shadowing + missing TextWidget face crash; 320 tests pass |
+| 2026-06-10 | issue | [fix-ebook-cancel-redownload-crash-nil-id_log.md](docs/devlog/202610-fix-ebook-cancel-redownload-crash-nil-id_log.md) | Fixed crash on ebook re-download after cancel; unwrapped `{item, ebook_only}` envelope in 3 re-push callbacks; 15 library_browser tests pass |
 | 2026-06-10 | issue | [fix-ebook-download-stub-never-executes_log.md](docs/devlog/20260610-fix-ebook-download-stub-never-executes_log.md) | Fixed ebook download never executing (TODO stub returned early); unified ebook+audio into shared download pipeline; 282 tests pass |
 | 2026-06-10 | issue | [fix-download-resume-resets-to-zero_log.md](docs/devlog/20260610-fix-download-resume-resets-to-zero_log.md) | Fixed resume always starting from zero; skip `prepare_download` for partial downloads (preserves "partial" status); fixed progress display to show already-downloaded bytes; 4 new tests; 77 downloader tests pass |
 | 2026-06-10 | issue | [fix-cancel-download-hang-starves-event-loop_log.md](docs/devlog/20260610-fix-cancel-download-hang-starves-event-loop_log.md) | Fixed cancel-download hanging emulator; `scheduleIn(0)` starved UIManager event loop; changed to `scheduleIn(0.05)`; 278 tests pass |
@@ -87,24 +88,24 @@ They capture what was done, decisions & rationale, gotchas & fixes, and next ste
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **absaudio.koplugin** (529 symbols, 529 relationships, 0 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **absaudio.koplugin** (571 symbols, 575 relationships, 0 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
-> Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
+> If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
 ## Always Do
 
-- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
-- **MUST run `detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows. For regression review, compare against the default branch: `detect_changes({scope: "compare", base_ref: "main"})`.
+- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `gitnexus_impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
+- **MUST run `gitnexus_detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows.
 - **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
-- When exploring unfamiliar code, use `query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
-- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `context({name: "symbolName"})`.
+- When exploring unfamiliar code, use `gitnexus_query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
+- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `gitnexus_context({name: "symbolName"})`.
 
 ## Never Do
 
-- NEVER edit a function, class, or method without first running `impact` on it.
+- NEVER edit a function, class, or method without first running `gitnexus_impact` on it.
 - NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
-- NEVER rename symbols with find-and-replace — use `rename` which understands the call graph.
-- NEVER commit changes without running `detect_changes()` to check affected scope.
+- NEVER rename symbols with find-and-replace — use `gitnexus_rename` which understands the call graph.
+- NEVER commit changes without running `gitnexus_detect_changes()` to check affected scope.
 
 ## Resources
 

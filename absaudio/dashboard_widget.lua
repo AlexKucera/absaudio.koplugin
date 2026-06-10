@@ -41,9 +41,6 @@ local widget_helpers = require("absaudio/widget_helpers")
 local has_manifest, manifest = pcall(require, "manifest")
 local has_api, api = pcall(require, "api")
 local has_library_browser, library_browser = pcall(require, "absaudio/library_browser")
-
-local has_downloader, downloader = pcall(require, "absaudio/downloader")
-local has_progress, progress = pcall(require, "absaudio/download_progress")
 if not has_library_browser then
     -- Use print() so it always shows in crash.log / stdout
     print("[ABS-DEBUG] library_browser load FAILED: " .. tostring(library_browser))
@@ -52,6 +49,9 @@ end
 local has_library_store, library_store = pcall(require, "absaudio/library_store")
 local has_navigator, nav = pcall(require, "absaudio/navigator")
 local has_cover_cache, cover_cache = pcall(require, "absaudio/cover_cache")
+local has_downloader, downloader = pcall(require, "absaudio/downloader")
+local has_abs_config, abs_config = pcall(require, "absaudio/config")
+local has_progress, progress = pcall(require, "absaudio/download_progress")
 
 local dashboard = {}
 
@@ -309,7 +309,11 @@ function DashboardView:_buildBookRow(book, title_text)
             padding = 0,
             CenterContainer:new{
                 dimen = Geom:new{ w = thumb_width, h = thumb_height },
-                TextWidget:new{ text = "🎵" },
+                TextWidget:new{
+                    text = "🎵",
+                    face = Font:getFace("cfont", Screen:scaleBySize(22)),
+                    fgcolor = Blitbuffer.COLOR_DARK_GRAY,
+                },
             },
         }
     end
@@ -635,12 +639,14 @@ function DashboardView:_onBookTap(book)
         nav.push("detail", {
             item = detail_item,
             on_download = function(data)
-                local bi = data.item or data
-                self:_onDownloadBook(bi, data.ebook_only or false)
+                local book_item = data.item or data
+                local ebook_only = data.ebook_only or false
+                self:_onDownloadBook(book_item, ebook_only)
             end,
             on_delete = function(data)
-                local b = data.item or data
-                self:_onDeleteBook(b, data.ebook_only or false)
+                local book_item = data.item or data
+                local ebook_only = data.ebook_only or false
+                self:_onDeleteBook(book_item, ebook_only)
             end,
             on_open_ebook = function(filepath)
                 self:_onOpenEbook(filepath)
@@ -650,12 +656,13 @@ function DashboardView:_onBookTap(book)
 end
 
 ------------------------------------------------------------------------
--- Download handler — mirrors LibraryBrowserView:_onDownloadBook
+-- Download handler — mirrors library_browser:_onDownloadBook
+-- Uses correct API: downloader.prepare_download + start_chunked_download
 ------------------------------------------------------------------------
 function DashboardView:_onDownloadBook(item, ebook_only)
-    abs_logger.info("Dashboard download: " .. (item.title or item.id)
+    abs_logger.info("Dashboard download requested: " .. (item.title or item.id)
         .. (ebook_only and " (ebook)" or ""))
-    if not has_manifest or not has_config then
+    if not has_manifest or not has_config or not has_downloader then
         UIManager:show(InfoMessage:new{ text = _("Download not available") })
         return
     end
@@ -666,7 +673,8 @@ function DashboardView:_onDownloadBook(item, ebook_only)
         local ok, ebook_result = downloader.prepare_ebook_download(item, manifest, config)
         if not ok then
             UIManager:show(InfoMessage:new{
-                text = _("No ebook files found for this book."), timeout = 3,
+                text = _("No ebook files found for this book."),
+                timeout = 3,
             })
             return
         end
@@ -674,19 +682,25 @@ function DashboardView:_onDownloadBook(item, ebook_only)
     else
         local existing_entry = manifest.getBook(item.id)
         if existing_entry and manifest.hasIncompleteFiles(item.id) then
+            abs_logger.info("Resuming incomplete download: " .. (item.title or item.id))
             result = existing_entry
         else
             local ok, prepare_result = downloader.prepare_download(item, manifest, config)
             if not ok then
                 if prepare_result == "already_downloaded" then
-                    local lfs = _G.lfs or require("lfs")
-                    local fs = {
-                        delete_file = function(path) os.remove(path) end,
-                        delete_dir = function(path) lfs.rmdir(path) end,
-                    }
-                    downloader.delete_book(item.id, manifest, fs)
-                    self:_onDownloadBook(item)
-                    return
+                    UIManager:show(ConfirmBox:new{
+                        text = _("Already downloaded. Re-download?"),
+                        ok_text = _("Re-download"),
+                        ok_callback = function()
+                            local lfs = _G.lfs or require("lfs")
+                            local fs = {
+                                delete_file = function(path) os.remove(path) end,
+                                delete_dir = function(path) lfs.rmdir(path) end,
+                            }
+                            downloader.delete_book(item.id, manifest, fs)
+                            self:_onDownloadBook(item)
+                        end,
+                    })
                 else
                     UIManager:show(InfoMessage:new{ text = _("No audio files found for this book.") })
                 end
@@ -700,7 +714,7 @@ function DashboardView:_onDownloadBook(item, ebook_only)
     local total_sizes = downloader.calculate_download_size(result.files)
     local needed = total_sizes
     if needed > 0 then
-        local download_dir = config:get("download_dir") or "/tmp"
+        local download_dir = abs_config.get("download_dir") or "/tmp"
         local free_bytes = downloader.get_free_space(download_dir)
         if free_bytes and not downloader.check_free_space(needed, free_bytes) then
             UIManager:show(InfoMessage:new{
@@ -712,29 +726,35 @@ function DashboardView:_onDownloadBook(item, ebook_only)
         end
     end
 
-    -- Download pipeline
+    -- Download pipeline with progress widget
     local state = downloader.create_download_state()
     state.start_time = os.time()
     state.total_files = #result.files
     state.total_bytes = total_sizes
-    state.bytes_downloaded = 0
 
     if has_progress then
-        progress.show({ state = state, on_cancel = function() state:cancel() end })
+        progress.show({
+            state = state,
+            on_cancel = function() state:cancel() end,
+        })
     end
 
     local lfs = _G.lfs or require("lfs")
     local deps = {
         manifest = manifest,
-        api = require("api"),
+        api = require("absaudio/api"),
         fs = {
             mkdir = function(path)
                 local parts = {}
-                for part in path:gmatch("[^/] + ") do table.insert(parts, part) end
+                for part in path:gmatch("[^/]+") do
+                    table.insert(parts, part)
+                end
                 local current = ""
                 for _, part in ipairs(parts) do
                     current = current .. "/" .. part
-                    if not lfs.attributes(current) then lfs.mkdir(current) end
+                    if not lfs.attributes(current) then
+                        lfs.mkdir(current)
+                    end
                 end
             end,
             open = function(path, mode) return io.open(path, mode) end,
@@ -746,16 +766,19 @@ function DashboardView:_onDownloadBook(item, ebook_only)
         state = state,
     }
 
-    local files = downloader.select_files_to_download(result.files)
-    local self_ref = self
+    local files_to_download = downloader.select_files_to_download(result.files)
     local entry = result
+    local self_ref = self
 
     local function schedule_next(idx)
-        if idx > #files or state:is_cancelled() then
+        if idx > #files_to_download or state:is_cancelled() then
             if has_progress then progress.close() end
+
             local msg = state:is_cancelled()
-                and _("Download cancelled.") or _("Download complete!")
+                and _("Download cancelled.")
+                or _("Download complete!")
             UIManager:show(InfoMessage:new{ text = msg, timeout = 3 })
+
             -- Refresh detail view
             if has_navigator then
                 nav.pop()
@@ -768,9 +791,9 @@ function DashboardView:_onDownloadBook(item, ebook_only)
                             self_ref:_onDownloadBook(bi, eo)
                         end,
                         on_delete = function(data)
-                            local b = data.item or data
+                            local bi = data.item or data
                             local eo = data.ebook_only or false
-                            self_ref:_onDeleteBook(b, eo)
+                            self_ref:_onDeleteBook(bi, eo)
                         end,
                         on_open_ebook = function(fp) self_ref:_onOpenEbook(fp) end,
                     })
@@ -779,65 +802,34 @@ function DashboardView:_onDownloadBook(item, ebook_only)
             return
         end
 
-        local file = files[idx]
+        local file = files_to_download[idx]
         state.current_file = file.filename
         state.current_file_index = idx
-        downloader.download_single_file(file, entry, deps)
-        UIManager:scheduleIn(0.05, function() schedule_next(idx + 1) end)
+
+        -- Use correct API: start_chunked_download(entry, file, deps)
+        downloader.start_chunked_download(entry, file, deps)
     end
 
     UIManager:scheduleIn(0.05, function() schedule_next(1) end)
 end
 
 ------------------------------------------------------------------------
--- Delete handler — mirrors LibraryBrowserView:_onDeleteBook
+-- Delete handler — mirrors library_browser:_onDeleteBook
 ------------------------------------------------------------------------
 function DashboardView:_onDeleteBook(item, ebook_only)
-    abs_logger.info("Dashboard delete: " .. (item.title or item.id)
+    abs_logger.info("Dashboard delete requested: " .. (item.title or item.id)
         .. (ebook_only and " (ebook only)" or ""))
-    if not has_manifest then
+    if not has_manifest or not has_downloader then
         UIManager:show(InfoMessage:new{ text = _("Delete not available") })
         return
     end
     manifest.init()
 
     if ebook_only then
-        local book_entry = manifest.getBook(item.id)
-        if book_entry and book_entry.files then
-            local lfs = _G.lfs or require("lfs")
-            local remaining_files = {}
-            for _, f in ipairs(book_entry.files) do
-                if f.type == "ebook" then
-                    os.remove(book_entry.local_dir .. "/" .. f.filename)
-                else
-                    table.insert(remaining_files, f)
-                end
-            end
-            book_entry.files = remaining_files
-            manifest.addBook(book_entry)
-            UIManager:show(InfoMessage:new{ text = _("Ebook deleted."), timeout = 3 })
-            if has_navigator then
-                nav.pop()
-                UIManager:scheduleIn(0.1, function()
-                    nav.push("detail", {
-                        item = item,
-                        on_download = function(data)
-                            local bi = data.item or data
-                            self:_onDownloadBook(bi, data.ebook_only or false)
-                        end,
-                        on_delete = function(data)
-                            local b = data.item or data
-                            self:_onDeleteBook(b, data.ebook_only or false)
-                        end,
-                        on_open_ebook = function(fp) self:_onOpenEbook(fp) end,
-                    })
-                end)
-            end
-        end
+        self:_onDeleteEbookOnly(item)
         return
     end
 
-    local ConfirmBox = require("ui/widget/confirmbox")
     UIManager:show(ConfirmBox:new{
         text = _("Delete this downloaded book?"),
         ok_text = _("Delete"),
@@ -848,8 +840,12 @@ function DashboardView:_onDeleteBook(item, ebook_only)
                 delete_dir = function(path) lfs.rmdir(path) end,
             }
             local ok = downloader.delete_book(item.id, manifest, fs)
-            UIManager:show(InfoMessage:new{ text = ok
-                and _("Book deleted successfully.") or _("Book not found in downloads."), timeout = 3 })
+            if ok then
+                UIManager:show(InfoMessage:new{ text = _("Book deleted successfully."), timeout = 3 })
+            else
+                UIManager:show(InfoMessage:new{ text = _("Book not found in downloads."), timeout = 3 })
+            end
+            -- Refresh detail view
             if has_navigator then
                 nav.pop()
                 UIManager:scheduleIn(0.1, function()
@@ -857,13 +853,15 @@ function DashboardView:_onDeleteBook(item, ebook_only)
                         item = item,
                         on_download = function(data)
                             local bi = data.item or data
-                            self:_onDownloadBook(bi, data.ebook_only or false)
+                            local eo = data.ebook_only or false
+                            self_ref:_onDownloadBook(bi, eo)
                         end,
                         on_delete = function(data)
-                            local b = data.item or data
-                            self:_onDeleteBook(b, data.ebook_only or false)
+                            local bi = data.item or data
+                            local eo = data.ebook_only or false
+                            self_ref:_onDeleteBook(bi, eo)
                         end,
-                        on_open_ebook = function(fp) self:_onOpenEbook(fp) end,
+                        on_open_ebook = function(fp) self_ref:_onOpenEbook(fp) end,
                     })
                 end)
             end
@@ -872,7 +870,48 @@ function DashboardView:_onDeleteBook(item, ebook_only)
 end
 
 ------------------------------------------------------------------------
--- Open ebook handler
+-- Ebook-only delete helper
+------------------------------------------------------------------------
+function DashboardView:_onDeleteEbookOnly(item)
+    local entry = manifest.getBook(item.id)
+    if not entry then return end
+
+    local lfs = _G.lfs or require("lfs")
+    for _, f in ipairs(entry.files or {}) do
+        if f.type == "ebook" then
+            local path = entry.local_dir .. "/" .. f.filename
+            if lfs.attributes(path) then
+                os.remove(path)
+            end
+            f.status = nil
+        end
+    end
+    manifest.flush()
+    UIManager:show(InfoMessage:new{ text = _("Ebook deleted."), timeout = 2 })
+
+    if has_navigator then
+        nav.pop()
+        UIManager:scheduleIn(0.1, function()
+            nav.push("detail", {
+                item = item,
+                on_download = function(data)
+                    local bi = data.item or data
+                    local eo = data.ebook_only or false
+                    self:_onDownloadBook(bi, eo)
+                end,
+                on_delete = function(data)
+                    local bi = data.item or data
+                    local eo = data.ebook_only or false
+                    self_ref:_onDeleteBook(bi, eo)
+                end,
+                on_open_ebook = function(fp) self_ref:_onOpenEbook(fp) end,
+            })
+        end)
+    end
+end
+
+------------------------------------------------------------------------
+-- Open ebook in KOReader's ReaderUI — mirrors library_browser:_onOpenEbook
 ------------------------------------------------------------------------
 function DashboardView:_onOpenEbook(filepath)
     abs_logger.info("Dashboard opening ebook: " .. tostring(filepath))
