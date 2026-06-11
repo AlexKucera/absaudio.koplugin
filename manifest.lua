@@ -231,7 +231,9 @@ end
 -- @param abs_item_id string
 -- @return boolean
 function manifest.isDownloaded(abs_item_id)
-    if not manifest.getBook(abs_item_id) then return false end
+    local entry = manifest.getBook(abs_item_id)
+    if not entry then return false end
+    if not entry.files or #entry.files == 0 then return false end
     return #manifest._filter_files(abs_item_id, function(f)
         return f.status ~= "complete"
     end) == 0

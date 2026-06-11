@@ -76,7 +76,7 @@ end
 
 --- Delete a file via os.remove.
 -- @param path string  file path to delete
--- @return boolean  true if removed (or didn't exist), false on error
+-- @return boolean  true if removed, false on error or if file did not exist
 function fs_helpers.delete_file(path)
     if not path then return false end
     return os.remove(path) ~= nil

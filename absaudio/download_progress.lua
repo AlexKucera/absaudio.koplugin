@@ -27,6 +27,7 @@ local Screen = Device.screen
 
 local abs_logger = require("abs_logger")
 
+local widget_helpers = require("absaudio/widget_helpers")
 local progress = {}
 local _widget = nil  -- reference to current widget
 
@@ -46,7 +47,6 @@ function progress.format_progress_info(state)
     local fraction = state:progress_fraction()
     local pct = math.floor(fraction * 100)
 
-    local widget_helpers = require("absaudio/widget_helpers")
     local format_bytes = widget_helpers.format_bytes
 
     local lines = {}

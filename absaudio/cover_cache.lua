@@ -26,7 +26,6 @@ elseif type(_G.lfs) == "table" and _G.lfs.mkdir then
 end
 local has_api, api = pcall(require, "api")
 local ltn12_ok, ltn12 = pcall(require, "ltn12")
-local fs_helpers = pcall(require, "absaudio/fs_helpers")
 local has_fs_helpers, fs_helpers = pcall(require, "absaudio/fs_helpers")
 
 local cover_cache = {}
