@@ -16,6 +16,7 @@
 -- All functions return: ok, result_or_error
 --   ok = true, result = parsed data (on success)
 --   ok = false, error_info = {type, status_code, message} (on failure)
+-- Return convention: (boolean, result|error) — ok-pattern for all endpoint wrappers.
 
 local abs_logger = require("abs_logger")
 

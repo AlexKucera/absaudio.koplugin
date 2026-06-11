@@ -13,10 +13,17 @@
 --   manifest.removeBook(abs_item_id)         -- delete entry
 --   manifest.updateFileStatus(abs_item_id, filename, status) -- update one file's status
 --   manifest.updatePosition(abs_item_id, current_time, is_finished) -- update playback position
+--
+-- Return conventions:
+--   Mutation functions (addBook/updateBook/removeBook/updateFileStatus/updatePosition):
+--     Returns (true) on success, (false) on miss (with abs_logger.warn).
+--   Query functions (getBook/getAllBooks/getRecentBook/isDownloaded/etc.):
+--     Return direct value or nil — no boolean wrapper.
 --   manifest.getRecentBook()                 -- get most recently played book (for dashboard)
 
 local LuaSettings = require("luasettings")
 local DataStorage = require("datastorage")
+local abs_logger = require("abs_logger")
 
 local manifest = {}
 
@@ -96,6 +103,11 @@ function manifest.updateBook(abs_item_id, updates)
         end
         settings:saveSetting("books", books)
         settings:flush()
+        return true
+    else
+        abs_logger.warn(string.format(
+            "manifest.updateBook: book not found for id=%s", tostring(abs_item_id)))
+        return false
     end
 end
 
@@ -116,14 +128,28 @@ function manifest.updateFileStatus(abs_item_id, filename, status)
     local books = get_books()
     local entry = books[abs_item_id]
     if entry and entry.files then
+        local found = false
         for _, file in ipairs(entry.files) do
             if file.filename == filename then
                 file.status = status
+                found = true
                 break
             end
         end
-        settings:saveSetting("books", books)
-        settings:flush()
+        if found then
+            settings:saveSetting("books", books)
+            settings:flush()
+            return true
+        else
+            abs_logger.warn(string.format(
+                "manifest.updateFileStatus: file '%s' not found in book id=%s",
+                tostring(filename), tostring(abs_item_id)))
+            return false
+        end
+    else
+        abs_logger.warn(string.format(
+            "manifest.updateFileStatus: book not found for id=%s", tostring(abs_item_id)))
+        return false
     end
 end
 
@@ -139,6 +165,11 @@ function manifest.updatePosition(abs_item_id, current_time, is_finished)
         entry.is_finished = is_finished
         settings:saveSetting("books", books)
         settings:flush()
+        return true
+    else
+        abs_logger.warn(string.format(
+            "manifest.updatePosition: book not found for id=%s", tostring(abs_item_id)))
+        return false
     end
 end
 

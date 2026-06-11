@@ -55,6 +55,7 @@ They capture what was done, decisions & rationale, gotchas & fixes, and next ste
 | 2026-06-11 | issue | [issue23-extract-shared-fs-helpers-module_log.md](docs/devlog/20260611-issue23-extract-shared-fs-helpers-module_log.md) | Created fs_helpers.lua with mkdir_p/get_file_size/delete_file/delete_dir; replaced inline mkdir in cover_cache+book_detail; 12 new tests; 341 total pass |
 | 2026-06-11 | issue | [issue24-pcall-guard-abs-logger-require_log.md](docs/devlog/20260611-issue24-pcall-guard-abs-logger-require_log.md) | pcall-guarded require('logger') in abs_logger with print fallback; 3 new tests; 344 total pass |
 | 2026-06-11 | issue | [issue26-remove-dead-download-delete-code-library-browser_log.md](docs/devlog/20260611-issue26-remove-dead-download-delete-code-library_browser_log.md) | Removed 406 lines dead download/delete code from library_browser; 4 new negative tests; 330 total pass |
+| 2026-06-11 | issue | [issue27-manifest-silent-failures-loud-return-conventions_log.md](docs/devlog/20260611-issue27-manifest-silent-failures-loud-return-conventions_log.md) | Manifest mutations warn+return-false on miss; return conventions documented in all 15 module headers; 6 new tests; 354 total pass |
 
 | 2026-06-10 | issue | [fix-book-detail-resume-progress-zero_log.md](docs/devlog/20260610-fix-book-detail-resume-progress-zero_log.md) | Fixed book detail resume progress always showing 0%; ported `get_existing_bytes()` + `bytes_downloaded=already_on_disk` + free-space fix from library_browser; 2 new tests; 365 total pass |
 | 2026-06-10 | issue | [fix-ebook-audio-download-status-independent_log.md](docs/devlog/20260610-fix-ebook-audio-download-status-independent_log.md) | Fixed ebook download overwriting audio manifest; per-type status tracking in book detail; fixed reconcile_manifest `fs:` crash; 306 tests pass |
@@ -93,7 +94,7 @@ They capture what was done, decisions & rationale, gotchas & fixes, and next ste
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **absaudio.koplugin** (654 symbols, 660 relationships, 0 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **absaudio.koplugin** (673 symbols, 679 relationships, 0 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 

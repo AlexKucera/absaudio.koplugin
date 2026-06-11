@@ -7,6 +7,7 @@
 --   cover_cache.getCoverPath(item_id)      -- get expected file path for a cover
 --   cover_cache.hasCachedCover(item_id)    -- check if cover exists on disk
 --   cover_cache.fetchAndCache(item_id)     -- fetch from ABS if not cached, store locally
+-- Return convention: (boolean, path_or_nil) ok-pattern — true+path on success, false on failure.
 
 local abs_logger = require("abs_logger")
 

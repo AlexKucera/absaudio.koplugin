@@ -7,6 +7,7 @@
 --   fs_helpers.get_file_size(path)    -- safe lfs.attributes size lookup
 --   fs_helpers.delete_file(path)      -- os.remove wrapper
 --   fs_helpers.delete_dir(path)       -- lfs.rmdir wrapper
+-- Return convention: boolean (true/false) for delete operations; direct value for get_file_size.
 
 local abs_logger = require("abs_logger")
 

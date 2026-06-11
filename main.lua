@@ -4,6 +4,7 @@
 --
 -- Public interface: This is a KOReader plugin module. KOReader calls init()
 -- and registers menu items automatically via the plugin loader.
+-- Return convention: void — all functions are side-effecting (menu registration, widget display).
 
 local Device = require("device")
 local Dispatcher = require("dispatcher")

@@ -23,10 +23,12 @@ package.loaded["datastorage"] = {
 }
 
 -- Stub logger (manifest.lua will use abs_logger which requires "logger")
+-- Use a recording stub so we can assert on warn() calls
+local recorded_warnings = {}
 package.loaded["logger"] = {
     dbg = function() end,
     info = function() end,
-    warn = function() end,
+    warn = function(msg) table.insert(recorded_warnings, msg) end,
 }
 
 local mock = require("spec/test_helper")
@@ -575,6 +577,127 @@ run_test("_resetSettings allows init to re-run", function()
 
     local book = manifest.getBook("li_reset_test")
     assert(book == nil, "getBook should return nil after reset with fresh settings")
+end)
+
+-- ============================================================
+-- Slice 5: Manifest mutation functions warn on miss (Issue #27)
+-- ============================================================
+
+run_test("updateBook warns when given nonexistent ID", function()
+    -- Clear recorded warnings before test
+    while #recorded_warnings > 0 do table.remove(recorded_warnings) end
+
+    mock_settings = mock.create_lua_settings({})
+    manifest._resetSettings()
+    manifest.init()
+
+    -- Do NOT add any book — call updateBook with a nonexistent ID
+    local result = manifest.updateBook("nonexistent", {title = "Updated"})
+
+    -- Should have emitted exactly one warning
+    mock.assert_equals(#recorded_warnings, 1,
+        "updateBook should emit one warning for nonexistent ID")
+    mock.assert_equals(string.find(recorded_warnings[1], "nonexistent") ~= nil, true,
+        "warning should mention the ID that was not found")
+end)
+
+run_test("updateBook warns when given nil ID", function()
+    while #recorded_warnings > 0 do table.remove(recorded_warnings) end
+
+    mock_settings = mock.create_lua_settings({})
+    manifest._resetSettings()
+    manifest.init()
+
+    local result = manifest.updateBook(nil, {title = "Updated"})
+
+    mock.assert_equals(#recorded_warnings, 1,
+        "updateBook should emit one warning for nil ID")
+end)
+
+run_test("updateFileStatus warns when book not found", function()
+    while #recorded_warnings > 0 do table.remove(recorded_warnings) end
+
+    mock_settings = mock.create_lua_settings({})
+    manifest._resetSettings()
+    manifest.init()
+
+    local result = manifest.updateFileStatus("nonexistent", "part1.m4b", "complete")
+
+    mock.assert_equals(#recorded_warnings, 1,
+        "updateFileStatus should emit one warning for nonexistent book ID")
+end)
+
+run_test("updateFileStatus warns when file not found in book", function()
+    while #recorded_warnings > 0 do table.remove(recorded_warnings) end
+
+    mock_settings = mock.create_lua_settings({})
+    manifest._resetSettings()
+    manifest.init()
+
+    manifest.addBook({
+        abs_item_id = "li_abc123",
+        title = "Test Book",
+        author = "Author",
+        local_dir = "/tmp/test",
+        files = {
+            {filename = "part1.m4b", size = 1000, type = "audio", status = "pending"},
+        },
+        current_time = 0,
+        duration = 3600,
+        chapters = {},
+        is_finished = false,
+        last_synced_at = 0,
+    })
+
+    -- Update a filename that doesn't exist in this book
+    local result = manifest.updateFileStatus("li_abc123", "missing.m4b", "complete")
+
+    mock.assert_equals(#recorded_warnings, 1,
+        "updateFileStatus should emit one warning for nonexistent filename")
+end)
+
+run_test("updatePosition warns when book not found", function()
+    while #recorded_warnings > 0 do table.remove(recorded_warnings) end
+
+    mock_settings = mock.create_lua_settings({})
+    manifest._resetSettings()
+    manifest.init()
+
+    local result = manifest.updatePosition("nonexistent", 100, false)
+
+    mock.assert_equals(#recorded_warnings, 1,
+        "updatePosition should emit one warning for nonexistent ID")
+end)
+
+run_test("mutation functions do NOT warn for valid IDs", function()
+    while #recorded_warnings > 0 do table.remove(recorded_warnings) end
+
+    mock_settings = mock.create_lua_settings({})
+    manifest._resetSettings()
+    manifest.init()
+
+    manifest.addBook({
+        abs_item_id = "li_valid",
+        title = "Valid Book",
+        author = "Author",
+        local_dir = "/tmp/test",
+        files = {
+            {filename = "part1.m4b", size = 1000, type = "audio", status = "pending"},
+        },
+        current_time = 0,
+        duration = 3600,
+        chapters = {},
+        is_finished = false,
+        last_synced_at = 0,
+    })
+
+    -- All valid operations — should produce zero warnings
+    manifest.updateBook("li_valid", {title = "Updated"})
+    manifest.updateFileStatus("li_valid", "part1.m4b", "complete")
+    manifest.updatePosition("li_valid", 100, false)
+
+    mock.assert_equals(#recorded_warnings, 0,
+        "no warnings should be emitted for valid operations")
 end)
 
 run_test("flush() is called by addBook (mock verify)", function()

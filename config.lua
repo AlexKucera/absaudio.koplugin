@@ -9,6 +9,7 @@
 --   config.is_configured()     -- true when server + token are set
 --   config.validate_server_url(url) -- validate/normalize server URL
 --   config.get_settings()      -- return underlying LuaSettings (for flush/close)
+-- Return convention: direct value (no boolean wrapper) — simple accessor pattern, nil for missing keys.
 
 local LuaSettings = require("luasettings")
 local DataStorage = require("datastorage")

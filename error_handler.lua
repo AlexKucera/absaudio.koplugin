@@ -8,6 +8,7 @@
 --   error_handler.from_api_error(api_error)              -- create from API client error table
 --
 -- Error types: "network", "auth", "not_found", "filesystem", "api", "parse", "unknown"
+-- Return convention: void for show(); direct value (string) for get_user_message(); direct value (table) for from_api_error().
 
 local InfoMessage = require("ui/widget/infomessage")
 local UIManager = require("ui/uimanager")
