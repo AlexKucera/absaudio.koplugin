@@ -664,6 +664,60 @@ run_test("api.init with two args (production signature) configures client", func
 end)
 
 -- ============================================================
+-- Test: api ↔ error_handler HTTP classification agreement
+-- ============================================================
+
+-- Stub KOReader dependencies needed by error_handler
+package.loaded["ui/widget/infomessage"] = {}
+package.loaded["ui/widget/infomessage"].new = function(self, opts)
+    return { text = opts.text }
+end
+package.loaded["ui/uimanager"] = {
+    show = function(_, widget) end,
+}
+package.loaded["gettext"] = function(s) return s end
+
+local error_handler = require("error_handler")
+
+local function assert_api_error_type_matches(status_code)
+    local transport = mock.create_transport_stub({
+        { status_code = status_code },
+    })
+    api.init("https://abs.example.com", "tok", transport)
+
+    local ok, err = api.getLibraries()
+    mock.assert_equals(ok, false, "should fail on HTTP " .. status_code)
+
+    local eh_type, _ = error_handler.classify_http_status(status_code)
+    mock.assert_equals(err.type, eh_type,
+        string.format("api error type for %d should match error_handler.classify_http_status", status_code))
+end
+
+run_test("api and error_handler agree on 401 (auth)", function()
+    assert_api_error_type_matches(401)
+end)
+
+run_test("api and error_handler agree on 403 (auth)", function()
+    assert_api_error_type_matches(403)
+end)
+
+run_test("api and error_handler agree on 404 (not_found)", function()
+    assert_api_error_type_matches(404)
+end)
+
+run_test("api and error_handler agree on 500 (server)", function()
+    assert_api_error_type_matches(500)
+end)
+
+run_test("api and error_handler agree on 502 (server)", function()
+    assert_api_error_type_matches(502)
+end)
+
+run_test("api and error_handler agree on 503 (server)", function()
+    assert_api_error_type_matches(503)
+end)
+
+-- ============================================================
 -- Summary
 -- ============================================================
 print(string.format("\n%d passed, %d failed", passed, failed))

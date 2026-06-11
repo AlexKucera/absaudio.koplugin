@@ -20,6 +20,9 @@
 
 local abs_logger = require("abs_logger")
 
+-- Lazy-load error_handler for HTTP status classification (may not be available in all envs)
+local _error_handler_ok, _error_handler = pcall(require, "error_handler")
+
 local api = {}
 
 -- Configuration
@@ -71,9 +74,23 @@ local function backoff_delay(attempt)
 end
 
 --- Classify an HTTP status code into an error type
+-- Delegates to error_handler.classify_http_status() when available.
+-- API-specific override: generic 4xx codes map to "client" (not "api").
 -- @param status_code number
 -- @return string  error type: "auth", "not_found", "server", "client", "unknown"
 local function classify_http_error(status_code)
+    -- Delegate to canonical classification in error_handler when available
+    if _error_handler_ok and _error_handler then
+        local err_type = _error_handler.classify_http_status(status_code)
+        -- API-specific override: generic 4xx client errors map to "client" not "api"
+        if status_code >= 400 and status_code < 500 and not
+           (status_code == 401 or status_code == 403 or status_code == 404 or status_code == 429) then
+            return "client"
+        end
+        return err_type
+    end
+
+    -- Fallback: local classification (mirrors error_handler for common codes)
     if status_code == 401 or status_code == 403 then
         return "auth"
     elseif status_code == 404 then
