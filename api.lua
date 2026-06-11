@@ -330,20 +330,28 @@ end
 -- @param item_id string  ABS item ID
 -- @param ino string  file inode number
 -- @param sink function  ltn12 sink to receive data
+-- @param extra_headers table|nil  optional extra headers (e.g. Range for resume)
 -- @return boolean ok
 -- @return number|error  status code or error info
-function api.downloadFile(item_id, ino, sink)
+function api.downloadFile(item_id, ino, sink, extra_headers)
     local path = "/api/items/" .. item_id .. "/file/" .. ino
     abs_logger.verbose("GET " .. path)
 
     set_timeout(CONNECT_TIMEOUT, DOWNLOAD_TIMEOUT)
 
+    local headers = {
+        ["Accept"] = "*/*",
+    }
+    if extra_headers then
+        for k, v in pairs(extra_headers) do
+            headers[k] = v
+        end
+    end
+
     local request = {
         url = server_url .. path .. "?token=" .. (auth_token or ""),
         method = "GET",
-        headers = {
-            ["Accept"] = "*/*",
-        },
+        headers = headers,
         sink = sink,
     }
 
@@ -504,6 +512,15 @@ end
 function api.is_configured()
     return server_url ~= nil and server_url ~= ""
         and auth_token ~= nil and auth_token ~= ""
+end
+
+--- Build the full download URL for a file (used by chunked_http)
+-- @param item_id string
+-- @param ino string
+-- @return string full URL with token
+function api.getDownloadUrl(item_id, ino)
+    local path = "/api/items/" .. item_id .. "/file/" .. ino
+    return server_url .. path .. "?token=" .. (auth_token or "")
 end
 
 return api

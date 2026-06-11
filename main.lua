@@ -18,6 +18,9 @@ local config = require("config")
 local abs_logger = require("abs_logger")
 local error_handler = require("error_handler")
 
+local has_downloader, downloader = pcall(require, "absaudio/downloader")
+local has_manifest_mod, manifest_mod = pcall(require, "manifest")
+
 -- Try to load dashboard widget (may not exist yet in early dev)
 local has_dashboard, dashboard = pcall(require, "absaudio/dashboard_widget")
 local has_navigator, nav = pcall(require, "absaudio/navigator")
@@ -38,6 +41,18 @@ function ABSAudio:init()
     if has_api and config.is_configured() then
         api.init(config.get("server"), config.get("token"))
         abs_logger.verbose("API client initialized for " .. tostring(config.get("server")))
+    end
+
+    -- Reconcile manifest against actual files on disk (detect incomplete downloads)
+    if has_downloader and has_manifest_mod then
+        manifest_mod.init()
+        local lfs = _G.lfs or require("lfs")
+        downloader.reconcile_manifest(manifest_mod, {
+            get_file_size = function(path)
+                local attr = lfs.attributes(path)
+                return attr and attr.size or nil
+            end,
+        })
     end
 
     -- Register menu items (appears in KOReader's plugin menu)

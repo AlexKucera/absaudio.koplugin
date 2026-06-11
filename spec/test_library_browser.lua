@@ -62,6 +62,7 @@ package.loaded["ui/widget/horizontalgroup"] = make_widget_stub()
 package.loaded["ui/widget/horizontalspan"] = make_widget_stub()
 package.loaded["ui/widget/imagewidget"] = make_widget_stub()
 package.loaded["ui/widget/infomessage"] = make_widget_stub()
+package.loaded["ui/widget/confirmbox"] = make_widget_stub()
 package.loaded["ui/widget/inputdialog"] = make_widget_stub()
 package.loaded["ui/widget/linewidget"] = make_widget_stub()
 package.loaded["ui/widget/textboxwidget"] = make_widget_stub()
@@ -562,6 +563,8 @@ run_test("onBookTap calls nav.push with detail screen", function()
     mock.assert_equals(#pushed, 1, "should have called nav.push once")
     mock.assert_equals(pushed[1].name, "detail", "should push 'detail' screen")
     mock.assert_equals(pushed[1].data.item.id, "li_001", "should pass the tapped item")
+    mock.assert_equals(type(pushed[1].data.on_download), "function", "should pass on_download callback")
+    mock.assert_equals(type(pushed[1].data.on_delete), "function", "should pass on_delete callback")
 
     package.loaded["absaudio/navigator"].push = function() end
 end)
@@ -633,6 +636,56 @@ run_test("show() returns _view for navigator tracking (source check)", function(
 
     mock.assert_equals(show_body:find("return _view") ~= nil, true,
         "browser.show should contain 'return _view' for navigator tracking")
+end)
+
+-- ============================================================
+-- Gap tests: ebook download, re-download prompt, delete confirm
+-- ============================================================
+
+run_test("onBookTap passes ebook_only flag through on_download", function()
+    local captured = nil
+    local data = { on_download = function(d) captured = d end }
+    browser.show(data)
+    local item = { id = "li_1", title = "Test Book", media = { metadata = {} } }
+    -- Simulate onBookTap with data containing ebook_only
+    local tap_data = { item = item, ebook_only = true }
+    data.on_download(tap_data)
+    mock.assert_equals(captured.ebook_only, true, "should pass ebook_only flag")
+    mock.assert_equals(captured.item.id, "li_1", "should pass item")
+end)
+
+-- ============================================================
+-- Regression: re-push detail callbacks must unwrap {item, ebook_only}
+-- ============================================================
+run_test("re-push detail on_download callback unwraps ebook format", function()
+    -- Verify ALL nav.push("detail" ...) calls in library_browser.lua
+    -- pass on_download callbacks that correctly unwrap {item=..., ebook_only=true}
+    -- This prevents the crash when: ebook download → cancel → tap download again
+    local source_file = io.open("absaudio/library_browser.lua", "r")
+    local source = source_file:read("*a")
+    source_file:close()
+
+    -- Find all nav.push("detail" blocks and check their on_download callbacks
+    local bad_callbacks = 0
+    local good_callbacks = 0
+
+    -- Pattern: look for 'function(b) ... _onDownloadBook(b) end' which is the BUG pattern
+    -- The fix uses: function(data) local book_item = data.item or data ... end
+    for m in source:gmatch("on_download%s*=%s*function%(%s*b%s*%)%s*self_ref?:_onDownloadBook%(%s*b%s*%)%s*end") do
+        bad_callbacks = bad_callbacks + 1
+    end
+
+    -- Count the correct unwrapping callbacks
+    for m in source:gmatch("local book_item = data%.item or data") do
+        good_callbacks = good_callbacks + 1
+    end
+
+    -- The initial onBookTap at line ~593 also has an unwrapping callback
+    -- So we expect at least 3 unwrapping callbacks (initial + cancel + completion + delete-repush)
+    mock.assert_equals(bad_callbacks, 0,
+        "no on_download callbacks should pass raw 'b' to _onDownloadBook")
+    mock.assert_equals(good_callbacks >= 3, true,
+        "all re-push sites should use unwrapping callback (found " .. good_callbacks .. ")")
 end)
 
 -- ============================================================

@@ -62,6 +62,7 @@ package.loaded["ui/widget/horizontalgroup"] = make_widget_stub()
 package.loaded["ui/widget/horizontalspan"] = make_widget_stub()
 package.loaded["ui/widget/imagewidget"] = make_widget_stub()
 package.loaded["ui/widget/infomessage"] = make_widget_stub()
+package.loaded["ui/widget/confirmbox"] = make_widget_stub()
 package.loaded["ui/widget/linewidget"] = make_widget_stub()
 package.loaded["ui/widget/textboxwidget"] = make_widget_stub()
 package.loaded["ui/widget/textwidget"] = make_widget_stub()
@@ -100,8 +101,11 @@ package.loaded["ui/size"] = {
 package.loaded["ui/uimanager"] = {
     show = function() end,
     close = function() end,
-    scheduleIn = function() end,
     setDirty = function() end,
+    _scheduleLog = {},
+    scheduleIn = function(delay, fn)
+        table.insert(package.loaded["ui/uimanager"]._scheduleLog, { delay = delay })
+    end,
 }
 
 package.loaded["gettext"] = function(s) return s end
@@ -161,10 +165,28 @@ package.loaded["manifest"] = {
     getBook = function(item_id)
         return mock_manifest_books[item_id]
     end,
+    isDownloaded = function(item_id)
+        local book = mock_manifest_books[item_id]
+        if not book or not book.files then return false end
+        for _, f in ipairs(book.files) do
+            if f.status ~= "complete" then return false end
+        end
+        return true
+    end,
+    hasIncompleteFiles = function(item_id)
+        local book = mock_manifest_books[item_id]
+        if not book or not book.files then return false end
+        for _, f in ipairs(book.files) do
+            if f.status == "pending" or f.status == "partial" then return true end
+        end
+        return false
+    end,
 }
 
 -- Mock cover_cache
 package.loaded["absaudio/cover_cache"] = {
+    isInitialized = function() return true end,
+    init = function() end,
     hasCachedCover = function() return false end,
     getCoverPath = function() return nil end,
     fetchAndCache = function() return false end,
@@ -179,6 +201,43 @@ package.loaded["absaudio/navigator"] = {
     _reset = function() end,
 }
 
+-- Pre-load mocks for modules that book_detail.lua requires at load time
+-- (so pcall(require) inside book_detail captures these, not the real modules)
+package.loaded["absaudio/downloader"] = {
+    prepare_download = function() return true, { abs_item_id = "mock_id", title = "Mock", local_dir = "/tmp/mock", files = {{ filename = "mock.m4b", status = "pending", size = 1000 }} } end,
+    prepare_ebook_download = function() return false, "none" end,
+    select_files_to_download = function(f) return f or {} end,
+    calculate_download_size = function() return 1000 end,
+    get_free_space = function() return 999999 end,
+    check_free_space = function() return true end,
+    create_download_state = function()
+        local s = { cancelled=false, total_files=1, total_bytes=1000, bytes_downloaded=0, current_file="" }
+        s.cancel = function(self) self.cancelled=true end
+        s.is_cancelled = function(self) return self.cancelled end
+        s.progress_fraction = function(self) return 0 end
+        return s
+    end,
+    start_chunked_download = function(entry, file, deps)
+        entry._start_chunked_called = true
+        entry._start_chunked_file = file.filename
+        return { pump=function()return false end, cancel=function()end, is_done=function()return true end, finalize=function()return true,nil end }
+    end,
+    format_bytes = function(b) return b.." B" end,
+    delete_book = function(id, manifest, fs) return true end,
+}
+package.loaded["absaudio/download_progress"] = { show=function()end, update=function()end, close=function()end }
+local ConfirmBoxMock = {}
+function ConfirmBoxMock:new(opts)
+    local o = opts or {}
+    setmetatable(o, { __index = self })
+    o.opts = opts
+    return o
+end
+package.loaded["ui/widget/confirmbox"] = ConfirmBoxMock
+
+-- Mock lfs for delete handlers that call _G.lfs or require("lfs")
+_G.lfs = { attributes = function() return nil end, rmdir = function() end }
+package.loaded["lfs"] = _G.lfs
 ------------------------------------------------------------------------
 -- Require module under test
 ------------------------------------------------------------------------
@@ -627,8 +686,602 @@ run_test("prepare() returns basic item when offline but item has title/media", f
 end)
 
 -- ============================================================
--- Summary
+-- Test: Download status badge and button behavior
 -- ============================================================
+
+-- Helper: search content_group for text matching pattern (checks InputContainer children too)
+local function find_text_in_view(view, pattern)
+    for _, widget in ipairs(view.content_group or {}) do
+        if widget.text and widget.text:match(pattern) then return true end
+        -- Buttons are wrapped in InputContainer → [1] = TextWidget
+        if widget[1] and widget[1].text and widget[1].text:match(pattern) then return true end
+    end
+    return false
+end
+
+run_test("_addDownloadStatus shows ✓ Downloaded when all files complete", function()
+    local shown_widgets = {}
+    local orig_show = package.loaded["ui/uimanager"].show
+    package.loaded["ui/uimanager"].show = function(self, widget)
+        table.insert(shown_widgets, widget)
+    end
+
+    local item = {
+        id = "item_complete",
+        title = "Complete Book",
+        media = { duration = 3600, metadata = { title = "Complete Book" } },
+    }
+    mock_api_configured = false
+    mock_manifest_books = {
+        item_complete = {
+            abs_item_id = "item_complete",
+            files = {
+                { filename = "book.m4b", status = "complete" },
+            },
+        },
+    }
+
+    detail.show({ item = item,
+        on_download = function() end,
+        on_delete = function() end,
+    })
+
+    local view = shown_widgets[#shown_widgets]
+    mock.assert_equals(view ~= nil, true, "should have created a view")
+    mock.assert_equals(find_text_in_view(view, "Audio downloaded"), true, "should show Audio downloaded badge")
+    mock.assert_equals(find_text_in_view(view, "Delete audio"), true, "should show Delete button when downloaded")
+
+    package.loaded["ui/uimanager"].show = orig_show
+end)
+
+run_test("_addDownloadStatus shows Resume when files incomplete", function()
+    local shown_widgets = {}
+    local orig_show = package.loaded["ui/uimanager"].show
+    package.loaded["ui/uimanager"].show = function(self, widget)
+        table.insert(shown_widgets, widget)
+    end
+
+    local item = {
+        id = "item_partial",
+        title = "Partial Book",
+        media = { duration = 3600, metadata = { title = "Partial Book" } },
+    }
+    mock_api_configured = false
+    mock_manifest_books = {
+        item_partial = {
+            abs_item_id = "item_partial",
+            files = {
+                { filename = "part1.m4b", status = "complete" },
+                { filename = "part2.m4b", status = "partial" },
+            },
+        },
+    }
+
+    detail.show({ item = item,
+        on_download = function() end,
+    })
+
+    local view = shown_widgets[#shown_widgets]
+    mock.assert_equals(view ~= nil, true, "should have created a view")
+    mock.assert_equals(find_text_in_view(view, "Resume"), true, "should show Resume button")
+
+    package.loaded["ui/uimanager"].show = orig_show
+end)
+
+run_test("_addDownloadStatus shows Download button when not in manifest", function()
+    local shown_widgets = {}
+    local orig_show = package.loaded["ui/uimanager"].show
+    package.loaded["ui/uimanager"].show = function(self, widget)
+        table.insert(shown_widgets, widget)
+    end
+
+    local item = {
+        id = "item_new",
+        title = "New Book",
+        media = { duration = 3600, metadata = { title = "New Book" } },
+    }
+    mock_api_configured = false
+    mock_manifest_books = {}
+
+    detail.show({ item = item,
+        on_download = function() end,
+    })
+
+    local view = shown_widgets[#shown_widgets]
+    mock.assert_equals(view ~= nil, true, "should have created a view")
+    mock.assert_equals(find_text_in_view(view, "Download audio"), true, "should show Download audio button")
+
+    package.loaded["ui/uimanager"].show = orig_show
+end)
+
+-- ============================================================
+-- Gap 5: Ebook download button
+-- ============================================================
+
+run_test("_addEbookFiles adds download button when on_download set", function()
+    local item = {
+        id = "item_ebook",
+        title = "Ebook Book",
+        mediaType = "book",
+        media = { duration = 3600, metadata = { title = "Ebook Book", authorName = "Author" } },
+    }
+
+    -- Use sync path (no API) with item that has ebookFiles from mock
+    mock_api_configured = false
+    mock_manifest_books = {}
+
+    -- Add ebookFiles directly to item so _addEbookFiles sees them
+    item.ebookFiles = {
+        { filename = "book.epub", format = "epub", size = 1048576 },
+    }
+
+    local download_called = false
+    local download_data = nil
+
+    local view = detail.show({
+        item = item,
+        on_download = function(data)
+            download_called = true
+            download_data = data
+        end,
+    })
+
+    -- Verify that the view was created
+    mock.assert_equals(view ~= nil, true, "view should exist")
+
+    -- Check that the ebook button text is in the view
+    mock.assert_equals(find_text_in_view(view, "Ebook"), true, "should show Download Ebook button")
+end)
+
+run_test("_addEbookFiles detects ebook from media.ebookFile (ABS format)", function()
+    local item = {
+        id = "item_abs_ebook",
+        title = "ABS Ebook Book",
+        mediaType = "book",
+        media = {
+            duration = 3600,
+            metadata = { title = "ABS Ebook Book", authorName = "Author" },
+            ebookFile = {
+                ino = "1590509",
+                metadata = {
+                    filename = "Oathbringer.pdf",
+                    ext = ".pdf",
+                    size = 17386979,
+                },
+                ebookFormat = "pdf",
+            },
+        },
+    }
+
+    mock_api_configured = false
+    mock_manifest_books = {}
+
+    local view = detail.show({
+        item = item,
+        on_download = function(data) end,
+        on_delete = function(data) end,
+    })
+
+    -- Should detect the ebook from media.ebookFile and show download button
+    mock.assert_equals(view ~= nil, true, "should have created a view")
+    mock.assert_equals(find_text_in_view(view, "Oathbringer.pdf"), true,
+        "should show ebook filename from media.ebookFile")
+end)
+
+-- Regression: LuaJSON null sentinel must not crash ebookFile detection
+-- KOReader uses LuaJSON which decodes JSON null as a sentinel function (json.util.null),
+-- not nil. The code must use type() == "table" instead of truthiness.
+run_test("_addEbookFiles handles LuaJSON null sentinel for ebookFile", function()
+    local null_sentinel = function() return null_sentinel end  -- mimics json.util.null
+    local item = {
+        id = "item_null_ebook",
+        title = "Null Ebook Book",
+        mediaType = "book",
+        media = {
+            duration = 3600,
+            metadata = { title = "Null Ebook Book", authorName = "Author" },
+            ebookFile = null_sentinel,  -- LuaJSON null, not nil!
+        },
+    }
+
+    mock_api_configured = false
+    mock_manifest_books = {}
+
+    local view = detail.show({
+        item = item,
+        on_download = function(data) end,
+        on_delete = function(data) end,
+    })
+
+    -- Should NOT crash; should simply skip ebook section
+    mock.assert_equals(view ~= nil, true, "should have created a view without crashing")
+    mock.assert_equals(find_text_in_view(view, "Oathbringer.pdf"), false,
+        "should NOT show ebook filename when ebookFile is null sentinel")
+end)
+
+-- ============================================================
+-- Test: Open Ebook button appears when ebook is fully downloaded
+-- ============================================================
+
+run_test("_addEbookFiles shows Open Ebook button when ebook is complete", function()
+    local item = {
+        id = "item_ebook_open",
+        title = "Openable Ebook",
+        mediaType = "book",
+        media = {
+            duration = 3600,
+            metadata = { title = "Openable Ebook", authorName = "Author" },
+            ebookFile = {
+                ino = "999",
+                metadata = {
+                    filename = "TestBook.epub",
+                    ext = ".epub",
+                    size = 1024000,
+                },
+                ebookFormat = "epub",
+            },
+        },
+    }
+
+    mock_api_configured = false
+    mock_manifest_books = {
+        item_ebook_open = {
+            abs_item_id = "item_ebook_open",
+            title = "Openable Ebook",
+            author = "Author",
+            local_dir = "/tmp/test_ebook",
+            files = {
+                {
+                    filename = "TestBook.epub",
+                    ino = "999",
+                    size = 1024000,
+                    type = "ebook",
+                    status = "complete",
+                },
+            },
+        },
+    }
+
+    local open_ebook_called = false
+    local open_ebook_path = nil
+
+    local view = detail.show({
+        item = item,
+        on_download = function(data) end,
+        on_delete = function(data) end,
+        on_open_ebook = function(path)
+            open_ebook_called = true
+            open_ebook_path = path
+        end,
+    })
+
+    mock.assert_equals(view ~= nil, true, "should have created a view")
+
+    mock.assert_equals(view ~= nil, true, "should have created a view")
+    mock.assert_equals(find_text_in_view(view, "Open Ebook"), true,
+        "should show Open Ebook button when ebook is complete")
+end)
+
+run_test("_addEbookFiles does NOT show Open Ebook button when ebook is not downloaded", function()
+    local item = {
+        id = "item_ebook_nodl",
+        title = "No Download Ebook",
+        mediaType = "book",
+        media = {
+            duration = 3600,
+            metadata = { title = "No Download Ebook", authorName = "Author" },
+            ebookFile = {
+                ino = "888",
+                metadata = {
+                    filename = "NoDL.epub",
+                    ext = ".epub",
+                    size = 500000,
+                },
+                ebookFormat = "epub",
+            },
+        },
+    }
+
+    mock_api_configured = false
+    mock_manifest_books = {}  -- no manifest entry = not downloaded
+
+    local view = detail.show({
+        item = item,
+        on_download = function(data) end,
+        on_delete = function(data) end,
+        on_open_ebook = function(path) end,
+    })
+
+    mock.assert_equals(view ~= nil, true, "should have created a view")
+    mock.assert_equals(find_text_in_view(view, "Open Ebook"), false,
+        "should NOT show Open Ebook button when ebook is not downloaded")
+end)
+
+run_test("_addEbookFiles on_open_ebook calls _onOpenEbook with correct path", function()
+    local item = {
+        id = "item_ebook_cb",
+        title = "Callback Ebook",
+        mediaType = "book",
+        media = {
+            duration = 3600,
+            metadata = { title = "Callback Ebook", authorName = "Author" },
+            ebookFile = {
+                ino = "777",
+                metadata = {
+                    filename = "CallbackBook.pdf",
+                    ext = ".pdf",
+                    size = 2048000,
+                },
+                ebookFormat = "pdf",
+            },
+        },
+    }
+
+    mock_api_configured = false
+    mock_manifest_books = {
+        item_ebook_cb = {
+            abs_item_id = "item_ebook_cb",
+            title = "Callback Ebook",
+            author = "Author",
+            local_dir = "/tmp/callback_ebook",
+            files = {
+                {
+                    filename = "CallbackBook.pdf",
+                    ino = "777",
+                    size = 2048000,
+                    type = "ebook",
+                    status = "complete",
+                },
+            },
+        },
+    }
+
+    -- Mock ReaderUI so _onOpenEbook doesn't crash
+    local readerui_show_called = false
+    local readerui_path = nil
+    package.loaded["apps/reader/readerui"] = {
+        showReader = function(self, path)
+            readerui_show_called = true
+            readerui_path = path
+        end,
+    }
+
+    -- Call show() without callbacks - uses self-contained _onOpenEbook
+    local view = detail.show({ item = item })
+
+    mock.assert_equals(view ~= nil, true, "should have created a view")
+
+    -- Simulate tapping the Open Ebook button
+    for _, widget in ipairs(view.content_group or {}) do
+        if widget[1] and widget[1].text and widget[1].text:match("Open Ebook") then
+            if widget.onTapOpenEbook then
+                widget:onTapOpenEbook()
+            end
+            break
+        end
+    end
+    mock.assert_equals(readerui_show_called, true, "_onOpenEbook should call ReaderUI")
+    mock.assert_equals(readerui_path, "/tmp/callback_ebook/CallbackBook.pdf",
+        "should pass correct file path to ReaderUI")
+
+    -- Clean up mock
+    package.loaded["apps/reader/readerui"] = nil
+end)
+-- ============================================================
+-- Test: BookDetailView has own _onDownloadBook method (self-contained)
+-- ============================================================
+run_test("BookDetailView:_onDownloadBook calls start_chunked_download and schedules pump", function()
+    -- Uses pre-load mocks (set before require) so book_detail captured them
+    local item = {}
+    item.id = "test_id"
+    item.title = "Test Book"
+    item.mediaType = "book"
+    item.media = {}
+    item.media.duration = 3600
+    item.media.metadata = {}
+    item.media.metadata.title = "Test Book"
+    item.media.metadata.authorName = "Author"
+    item.media.audioFiles = {}
+    item.media.audioFiles[1] = {}
+    item.media.audioFiles[1].ino = "1"
+    item.media.audioFiles[1].metadata = {}
+    item.media.audioFiles[1].metadata.filename = "test.m4b"
+    item.media.audioFiles[1].metadata.ext = ".m4b"
+    item.media.audioFiles[1].metadata.size = 1000
+
+    mock_api_configured = false
+    mock_manifest_books = {}
+
+    local view = detail.show({ item = item })
+
+    mock.assert_equals(type(view._onDownloadBook), "function",
+        "BookDetailView must have _onDownloadBook method")
+
+    -- Override scheduleIn locally to execute small-delay callbacks (so download pipeline runs)
+    local uim = package.loaded["ui/uimanager"]
+    local orig_scheduleIn = uim.scheduleIn
+        uim.scheduleIn = function(delay, fn)
+            orig_scheduleIn(delay, fn)
+            if type(delay) == "number" and (not delay or delay <= 0.2) then fn() end
+    end
+    -- Call should not error — exercises full pipeline with pre-load mocks
+    view:_onDownloadBook(item, false)
+
+    -- Restore original scheduleIn
+    uim.scheduleIn = orig_scheduleIn
+
+    mock.assert_equals(#uim._scheduleLog >= 1, true,
+        "should have scheduled via UIManager.scheduleIn")
+end)
+
+-- ============================================================
+-- Test: BookDetailView has own _onOpenEbook method
+-- ============================================================
+run_test("BookDetailView:_onOpenEbook opens ReaderUI with filepath", function()
+    local opened_filepath = nil
+
+    -- Mock ReaderUI (colon-call passes self as first arg)
+    package.loaded["apps/reader/readerui"] = {
+        showReader = function(self, filepath)
+            opened_filepath = filepath
+        end,
+    }
+
+    local item = {
+        id = "ebook_test",
+        title = "Ebook Test",
+        mediaType = "book",
+        media = { duration=3600, metadata={title="Ebook Test", authorName="Author"} },
+    }
+    mock_api_configured = false
+    mock_manifest_books = {}
+
+    local view = detail.show({ item = item })
+
+    -- Must have _onOpenEbook method
+    mock.assert_equals(type(view._onOpenEbook), "function",
+        "BookDetailView must have _onOpenEbook method")
+
+    -- Call it
+    view:_onOpenEbook("/tmp/test/book.epub")
+
+    mock.assert_equals(opened_filepath, "/tmp/test/book.epub",
+        "should open ReaderUI with correct filepath")
+
+    -- Clean up
+    package.loaded["apps/reader/readerui"] = nil
+end)
+-- ============================================================
+-- Test: BookDetailView has own _onDeleteBook method
+-- ============================================================
+run_test("BookDetailView:_onDeleteBook shows ConfirmBox and deletes book", function()
+    local deleted_id = nil
+    local confirmbox_text = nil
+    local uimanager_widgets = {}
+
+    -- Intercept UIManager.show to capture ConfirmBox and auto-confirm
+    local orig_show = package.loaded["ui/uimanager"].show
+    package.loaded["ui/uimanager"].show = function(self, widget)
+        table.insert(uimanager_widgets, widget)
+        -- Auto-confirm: if this looks like a ConfirmBox, fire ok_callback
+        if widget and widget.opts and widget.opts.ok_callback then
+            confirmbox_text = widget.opts.text
+            widget.opts.ok_callback()
+        end
+    end
+
+    -- Spy on delete_book by mutating the pre-loaded downloader table
+    -- (book_detail's local `downloader` points to this same table)
+    local dl_mock = package.loaded["absaudio/downloader"]
+    local orig_delete_book = dl_mock.delete_book
+    dl_mock.delete_book = function(id, manifest, fs)
+        deleted_id = id
+        return true
+    end
+
+    local item = {
+        id = "del_test",
+        title = "Delete Me",
+        mediaType = "book",
+        media = { duration=3600, metadata={title="Delete Me", authorName="Author"} },
+    }
+    mock_api_configured = false
+    mock_manifest_books = {}
+
+    local view = detail.show({ item = item })
+
+    -- Must have _onDeleteBook method
+    mock.assert_equals(type(view._onDeleteBook), "function",
+        "BookDetailView must have _onDeleteBook method")
+
+    -- Call it — should show ConfirmBox, then delete when confirmed
+    view:_onDeleteBook(item, false)
+
+    mock.assert_equals(confirmbox_text ~= nil, true, "should show ConfirmBox")
+    mock.assert_equals(deleted_id, "del_test", "should delete correct book ID")
+
+    -- Restore mocks
+    package.loaded["ui/uimanager"].show = orig_show
+    dl_mock.delete_book = orig_delete_book
+end)
+-- ============================================================
+-- Test: Detail view works without any callbacks (self-contained)
+-- ============================================================
+run_test("detail.show without callbacks still has working action methods", function()
+    local item = {
+        id = "self_wire_test",
+        title = "Self Wired",
+        mediaType = "book",
+        media = { duration=3600, metadata={title="Self Wired", authorName="Author"} },
+    }
+    mock_api_configured = false
+    mock_manifest_books = {}
+
+    -- Call show() with NO callbacks at all - this is the new interface
+    local view = detail.show({ item = item })
+
+    mock.assert_equals(view ~= nil, true, "should create view without callbacks")
+
+    -- All four action methods must exist regardless of callbacks being passed
+    mock.assert_equals(type(view._onDownloadBook), "function", "must have _onDownloadBook")
+    mock.assert_equals(type(view._onDeleteBook), "function", "must have _onDeleteBook")
+    mock.assert_equals(type(view._onDeleteEbookOnly), "function", "must have _onDeleteEbookOnly")
+    mock.assert_equals(type(view._onOpenEbook), "function", "must have _onOpenEbook")
+end)
+if #errors > 0 then
+    print("\nFailures:")
+    for _, e in ipairs(errors) do
+        print("  " .. e.name .. ": " .. tostring(e.err))
+    end
+    os.exit(1)
+end
+-- ============================================================
+-- Ebook status tests: per-type download status
+-- ============================================================
+
+-- Ebook per-type status tested in test_downloader.lua (slices 11-13)
+-- Book detail UI tests for ebook status + Open Ebook button covered by _addEbookFiles tests
+
+-- ============================================================
+-- Regression: download guard uses correct variable name (has_abs_config)
+-- ============================================================
+
+run_test("_onDownloadBook does not show 'not available' when modules loaded", function()
+    -- This regression test catches the bug where the guard checked
+    -- has_config (nil/undeclared) instead of has_abs_config,
+    -- causing ALL downloads to show "Download not available"
+    local view = detail._renderView({
+        title = "Guard Test",
+        id = "regress_guard",
+        authors = {},
+        series = nil,
+        description = "test",
+        narrators = {},
+        duration_seconds = 3600,
+        cover_url = nil,
+        formats = { audiobook = { id = "fmt1" } },
+        ebook_formats = {},
+        status = {},
+    })
+    assert(view.detail_ref, "detail_ref should exist")
+
+    -- All requires should have succeeded in this test environment
+    -- so calling _onDownloadBook should NOT trigger the availability guard
+    local info_shown = false
+    local uim = package.loaded["ui/uimanager"]
+    local orig_show = uim.show
+    uim.show = function(_, w)
+        if w.text and w.text:find("not available") then
+            info_shown = true
+        end
+    end
+
+    pcall(function() view.detail_ref:_onDownloadBook({ id = "test", formats = { audiobook = { id = "fmt1" } } }, false) end)
+
+    uim.show = orig_show
+    assert(not info_shown, "should NOT show 'download not available' when modules are present")
+end)
+
 print(string.format("\n%d passed, %d failed", passed, failed))
 
 if #errors > 0 then

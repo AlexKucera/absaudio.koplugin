@@ -93,6 +93,7 @@ end)
 -- Test: getAllBooks returns all added entries
 -- ============================================================
 run_test("getAllBooks returns all added entries", function()
+    manifest._resetSettings()
     mock_settings = mock.create_lua_settings({})
 
     manifest.init()
@@ -266,6 +267,7 @@ end)
 -- Test: getRecentBook returns book with highest current_time
 -- ============================================================
 run_test("getRecentBook returns book with highest current_time", function()
+    manifest._resetSettings()
     mock_settings = mock.create_lua_settings({})
 
     manifest.init()
@@ -319,12 +321,284 @@ end)
 -- Test: getRecentBook returns nil when no books exist
 -- ============================================================
 run_test("getRecentBook returns nil when no books exist", function()
+    manifest._resetSettings()
     mock_settings = mock.create_lua_settings({})
 
     manifest.init()
 
     local recent = manifest.getRecentBook()
     mock.assert_equals(recent, nil, "getRecentBook should return nil with no books")
+end)
+
+-- ============================================================
+-- Slice 4: Manifest helper queries
+-- ============================================================
+
+run_test("isDownloaded returns true when all files complete", function()
+    mock_settings = mock.create_lua_settings({})
+    manifest.init()
+
+    manifest.addBook({
+        abs_item_id = "li_abc123",
+        title = "Test Book",
+        author = "Author",
+        local_dir = "/tmp/test",
+        files = {
+            {filename = "part1.m4b", size = 1000, type = "audio", status = "complete"},
+            {filename = "part2.m4b", size = 2000, type = "audio", status = "complete"},
+        },
+        current_time = 0,
+        duration = 3600,
+        chapters = {},
+        is_finished = false,
+        last_synced_at = 0,
+    })
+
+    mock.assert_equals(manifest.isDownloaded("li_abc123"), true, "all complete → downloaded")
+end)
+
+run_test("isDownloaded returns false when some files pending", function()
+    mock_settings = mock.create_lua_settings({})
+    manifest.init()
+
+    manifest.addBook({
+        abs_item_id = "li_abc123",
+        title = "Test Book",
+        author = "Author",
+        local_dir = "/tmp/test",
+        files = {
+            {filename = "part1.m4b", size = 1000, type = "audio", status = "complete"},
+            {filename = "part2.m4b", size = 2000, type = "audio", status = "pending"},
+        },
+        current_time = 0,
+        duration = 3600,
+        chapters = {},
+        is_finished = false,
+        last_synced_at = 0,
+    })
+
+    mock.assert_equals(manifest.isDownloaded("li_abc123"), false, "some pending → not downloaded")
+end)
+
+run_test("isDownloaded returns false for unknown book", function()
+    mock_settings = mock.create_lua_settings({})
+    manifest.init()
+
+    mock.assert_equals(manifest.isDownloaded("nonexistent"), false, "unknown → not downloaded")
+end)
+
+run_test("hasIncompleteFiles returns true for partial files", function()
+    mock_settings = mock.create_lua_settings({})
+    manifest.init()
+
+    manifest.addBook({
+        abs_item_id = "li_abc123",
+        title = "Test Book",
+        author = "Author",
+        local_dir = "/tmp/test",
+        files = {
+            {filename = "part1.m4b", size = 1000, type = "audio", status = "partial"},
+        },
+        current_time = 0,
+        duration = 3600,
+        chapters = {},
+        is_finished = false,
+        last_synced_at = 0,
+    })
+
+    mock.assert_equals(manifest.hasIncompleteFiles("li_abc123"), true, "partial → incomplete")
+end)
+
+run_test("hasIncompleteFiles returns false for all complete", function()
+    mock_settings = mock.create_lua_settings({})
+    manifest.init()
+
+    manifest.addBook({
+        abs_item_id = "li_abc123",
+        title = "Test Book",
+        author = "Author",
+        local_dir = "/tmp/test",
+        files = {
+            {filename = "part1.m4b", size = 1000, type = "audio", status = "complete"},
+        },
+        current_time = 0,
+        duration = 3600,
+        chapters = {},
+        is_finished = false,
+        last_synced_at = 0,
+    })
+
+    mock.assert_equals(manifest.hasIncompleteFiles("li_abc123"), false, "all complete → not incomplete")
+end)
+
+run_test("getIncompleteFiles returns only pending/partial files", function()
+    mock_settings = mock.create_lua_settings({})
+    manifest.init()
+
+    manifest.addBook({
+        abs_item_id = "li_abc123",
+        title = "Test Book",
+        author = "Author",
+        local_dir = "/tmp/test",
+        files = {
+            {filename = "part1.m4b", size = 1000, type = "audio", status = "complete"},
+            {filename = "part2.m4b", size = 2000, type = "audio", status = "pending"},
+            {filename = "part3.m4b", size = 3000, type = "audio", status = "partial"},
+        },
+        current_time = 0,
+        duration = 3600,
+        chapters = {},
+        is_finished = false,
+        last_synced_at = 0,
+    })
+
+    local incomplete = manifest.getIncompleteFiles("li_abc123")
+    mock.assert_equals(#incomplete, 2, "two incomplete files")
+    mock.assert_equals(incomplete[1].filename, "part2.m4b", "first incomplete")
+    mock.assert_equals(incomplete[2].filename, "part3.m4b", "second incomplete")
+end)
+
+run_test("getTotalFileSize returns sum of all file sizes", function()
+    mock_settings = mock.create_lua_settings({})
+    manifest.init()
+
+    manifest.addBook({
+        abs_item_id = "li_abc123",
+        title = "Test Book",
+        author = "Author",
+        local_dir = "/tmp/test",
+        files = {
+            {filename = "part1.m4b", size = 1000, type = "audio", status = "complete"},
+            {filename = "part2.m4b", size = 2000, type = "audio", status = "pending"},
+        },
+        current_time = 0,
+        duration = 3600,
+        chapters = {},
+        is_finished = false,
+        last_synced_at = 0,
+    })
+
+    mock.assert_equals(manifest.getTotalFileSize("li_abc123"), 3000, "1000 + 2000 = 3000")
+end)
+
+run_test("getDownloadedSize returns sum of complete file sizes", function()
+    mock_settings = mock.create_lua_settings({})
+    manifest.init()
+
+    manifest.addBook({
+        abs_item_id = "li_abc123",
+        title = "Test Book",
+        author = "Author",
+        local_dir = "/tmp/test",
+        files = {
+            {filename = "part1.m4b", size = 1000, type = "audio", status = "complete"},
+            {filename = "part2.m4b", size = 2000, type = "audio", status = "pending"},
+        },
+        current_time = 0,
+        duration = 3600,
+        chapters = {},
+        is_finished = false,
+        last_synced_at = 0,
+    })
+
+    mock.assert_equals(manifest.getDownloadedSize("li_abc123"), 1000, "only complete file")
+end)
+
+-- ============================================================
+-- Regression: manifest.init() must not discard in-memory state
+-- Bug: init() used to re-open LuaSettings from disk, losing
+-- addBook/updateFileStatus changes that hadn't been flushed.
+-- Fix: init() is now idempotent (no-op after first call).
+-- ============================================================
+run_test("init() is idempotent: second call does not discard data", function()
+    mock_settings = mock.create_lua_settings({})
+    manifest._resetSettings()  -- allow init to run fresh
+
+    manifest.init()
+
+    manifest.addBook({
+        abs_item_id = "li_reinit_test",
+        title = "Reinit Test",
+        author = "Author",
+        local_dir = "/tmp/reinit",
+        files = {
+            { filename = "test.m4b", ino = 1, size = 100, type = "audio", status = "pending" },
+        },
+        current_time = 0,
+        duration = 3600,
+        chapters = {},
+        is_finished = false,
+        last_synced_at = 0,
+    })
+
+    -- Simulate what happens after download: updateFileStatus, then init()
+    manifest.updateFileStatus("li_reinit_test", "test.m4b", "complete")
+
+    -- Before fix, this would re-read from disk and lose everything
+    manifest.init()
+
+    local book = manifest.getBook("li_reinit_test")
+    assert(book ~= nil, "getBook should still find the book after init()")
+    mock.assert_equals(book.title, "Reinit Test", "title should survive init()")
+
+    -- isDownloaded should return true since the file is complete
+    mock.assert_equals(manifest.isDownloaded("li_reinit_test"), true,
+        "isDownloaded should return true after updateFileStatus + init()")
+
+    -- Verify file status survived
+    mock.assert_equals(book.files[1].status, "complete",
+        "file status should be 'complete' after init()")
+end)
+
+run_test("_resetSettings allows init to re-run", function()
+    mock_settings = mock.create_lua_settings({})
+    manifest._resetSettings()
+
+    manifest.init()
+    manifest.addBook({
+        abs_item_id = "li_reset_test",
+        title = "Reset Test",
+        author = "A",
+        local_dir = "/tmp/reset",
+        files = {},
+        current_time = 0,
+        duration = 0,
+        chapters = {},
+        is_finished = false,
+        last_synced_at = 0,
+    })
+
+    -- Reset and re-init with fresh settings
+    manifest._resetSettings()
+    mock_settings = mock.create_lua_settings({})
+    manifest.init()
+
+    local book = manifest.getBook("li_reset_test")
+    assert(book == nil, "getBook should return nil after reset with fresh settings")
+end)
+
+run_test("flush() is called by addBook (mock verify)", function()
+    local flush_count = 0
+    mock_settings = mock.create_lua_settings({})
+    -- Override flush to count calls
+    mock_settings.flush = function(self) flush_count = flush_count + 1 end
+    manifest._resetSettings()
+    manifest.init()
+
+    manifest.addBook({
+        abs_item_id = "li_flush_test",
+        title = "Flush Test",
+        author = "A",
+        local_dir = "/tmp/flush",
+        files = {},
+        current_time = 0,
+        duration = 0,
+        chapters = {},
+        is_finished = false,
+        last_synced_at = 0,
+    })
+
+    mock.assert_equals(flush_count, 1, "addBook should call flush once")
 end)
 
 -- ============================================================

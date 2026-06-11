@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file. The format 
 ## [Unreleased]
 
 ### feat
+- **download-progress:** add download progress widget with file count, percentage, ETA, and cancel button
+- **download:** add free space check before downloads using `df` command
+- **download:** add coroutine-based chunked download (`start_chunked_download`) using raw socket I/O via `chunked_http` module that yields to KOReader event loop every 32KB, enabling progress updates and cancel during large file transfers
+- **download:** add ebook download button in book detail view with `ebook_only` flag
+- **api:** add `downloadFile` endpoint with Range header support for resuming partial downloads
+- **detail:** add Open Ebook button to open downloaded ebooks in KOReader ReaderUI; fix ebook section rendering when viewing downloaded books offline
+
+### fix
+
+- **download-progress:** fix widget init crash when state is nil — `format_progress_info` called `state:progress_fraction()` on bare `{}` from `self.state or {}` fallback; added nil/type guard returning safe default text and removed misleading empty-table fallback
+- **book-detail:** fix ebook re-download silently failing after delete — `_onDeleteEbookOnly` was setting `f.status = nil` but leaving the file entry in `entry.files`, causing `prepare_ebook_download` to treat it as already-tracked and skip creating a fresh `"pending"` entry; now removes ebook entries from files array (matching library_browser behavior)
+- **book-detail:** initialize `bytes_downloaded` to existing disk bytes on resume so progress display shows correct percentage instead of 0%; also fix free-space check to subtract already-downloaded bytes so it doesn't falsely reject resumes
+- **book-detail:** make BookDetailView own its download/delete/ebook-open behavior as instance methods instead of receiving callbacks from callers; fixes all 4 PR #22 review findings: dashboard coroutine handle discarded (Finding #1), `self_ref` nil crash in delete handlers (Finding #2), ConfirmBox not required (Finding #3), and `config:get` colon-call silently ignoring user settings in downloader (Finding #4)
+- **downloader:** fix `config:get` colon-calls to `config.get` dot-calls so user-configured download directory and preferred format are actually read
+- **dashboard:** remove ~278 lines of broken duplicate handler code; `_onBookTap` now passes item-only to detail view; add missing `onClose()` method
+- **library-browser:** strip callback parameters from detail navigation calls (behavior now lives in book_detail)
+- **book-detail:** fix copy-paste bugs in _onDownloadBook: wrong require path (`absaudio/config` → `config`), guard variable name mismatch, and stray `)` inside gmatch pattern string that caused `invalid pattern capture` crash on download start
+- **dashboard:** fix non-existent `downloader.download_single_file` call — replaced with correct API `start_chunked_download(entry, file, deps)`; also fixed wrong argument order `(file, entry, deps)` → `(entry, file, deps)`
+- **dashboard:** fix emulator crash on dashboard show — missing `cover_cache` require caused fallback to TextWidget without `face` parameter (nil face crash at font.lua:386); added proper face matching library_browser pattern
+- **dashboard:** fix KOReader `config` variable shadowing — renamed absaudio config to `abs_config` to avoid overwriting built-in `config` module
+- **dashboard:** rewrite download/delete/ebook handlers to mirror library_browser pipeline with full detail-view functionality from any navigation path
+- **download:** fix ebook download never executing — the ebook branch in `_onDownloadBook` was a TODO stub that returned early after showing "Ebook download prepared"; unified ebook and audio paths into a single shared pipeline so ebook files actually download to disk
+- **download:** fix ebook download overwriting audiobook manifest entry — `prepare_download` and `prepare_ebook_download` now merge files into existing entries instead of replacing them; audio and ebook download status tracked independently with per-type badges and action buttons
+- **download:** fix `lfs.attributes` crash on plugin init — `reconcile_manifest` used Lua `:` method call on a plain function table, passing the table as the first arg to `lfs.attributes`
+- **download:** fix cancel button hanging emulator until download completes — `scheduleIn(0, pump)` made each pump "due now" so UIManager's task drain loop never yielded to input event processing; changed to `scheduleIn(0.05)` (50ms) so cancel taps are dispatched between chunks
+- **book-detail:** fix ebook file detection — ABS API returns `media.ebookFile` (singular object), not `ebookFiles` (plural array); convert to internal format with fallback
+- **downloader:** fix `get_ebook_files` to check `media.ebookFile` first (ABS format), falling back to `media.ebooks`
+- **download:** fix `attempt to yield across C-call boundary` crash — `socket.http.request` wraps everything in `socket.protect(pcall)`, making `coroutine.yield()` inside ltn12 sinks impossible; created raw socket `chunked_http` module that reads body chunks via `sock:receive()` and yields between reads in pure Lua context, bypassing C-boundary entirely
+- **library-browser:** wire free space check to show InfoMessage when insufficient disk space
+- **library-browser:** wire download/delete callbacks through navigator to book detail view
+- **manifest:** fix `init()` discarding in-memory download state by re-reading from disk — make init idempotent (no-op after first call), add `flush()` to all mutating functions so changes persist
+- **book-detail:** fix checkerboard cover after download — verify `cover.jpg` exists on disk before using it, fall through to cached cover or placeholder
+- **cover-cache:** fix crash when tapping downloaded book on dashboard — `cover_cache.init()` was only called in library browser path; moved init into `detail.prepare()` with idempotent guard so it runs from any entry path
+
 ### fix
 
 - **nav:** defer closing previous widget until new one is ready — eliminate flash of KOReader file browser during async screen transitions (e.g., library → book detail)

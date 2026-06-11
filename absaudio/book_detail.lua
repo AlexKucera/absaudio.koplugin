@@ -4,7 +4,7 @@
 --
 -- Public API:
 --   detail.show(data)
---     data: { item=..., on_download=fn }
+--     data: { item=..., on_download=fn, on_delete=fn }
 --
 -- When show() is called, it first tries to fetch expanded item details from ABS.
 -- If that fails and the book is downloaded, it falls back to manifest data.
@@ -45,6 +45,10 @@ local has_api, api = pcall(require, "api")
 local has_cover_cache, cover_cache = pcall(require, "absaudio/cover_cache")
 local library_store = require("absaudio/library_store")
 local has_navigator, nav = pcall(require, "absaudio/navigator")
+local has_downloader, downloader = pcall(require, "absaudio/downloader")
+local has_config, config = pcall(require, "config")
+local has_progress, progress = pcall(require, "absaudio/download_progress")
+local ConfirmBox = require("ui/widget/confirmbox")
 
 local detail = {}
 
@@ -54,6 +58,12 @@ local detail = {}
 -- or returns basic item data. Returns (data, nil) or (nil, error_info).
 ------------------------------------------------------------------------
 function detail.prepare(item)
+    -- Initialize cover cache (idempotent — safe to call from any entry path)
+    if has_cover_cache and not cover_cache.isInitialized() then
+        local DataStorage = require("datastorage")
+        cover_cache.init(DataStorage:getSettingsDir() .. "/absaudio_covers")
+    end
+
     -- Initialize manifest for potential fallback
     if has_manifest then
         manifest.init()
@@ -172,7 +182,19 @@ function BookDetailView:init()
     end
 
     -- Ebook/PDF files section
-    local ebook_files = self.item.ebookFiles or {}
+    -- ABS returns media.ebookFile (singular object), not ebookFiles (plural array)
+    local ebook_files = {}
+    if self.item.media and type(self.item.media.ebookFile) == "table" then
+        local ef = self.item.media.ebookFile
+        table.insert(ebook_files, {
+            filename = ef.metadata and ef.metadata.filename or "ebook",
+            format = ef.ebookFormat or (ef.metadata and ef.metadata.ext and ef.metadata.ext:gsub("^%.", "")) or "?",
+            size = ef.metadata and ef.metadata.size or 0,
+            ino = ef.ino,
+        })
+    elseif self.item.ebookFiles then
+        ebook_files = self.item.ebookFiles
+    end
     if #ebook_files > 0 then
         self:_addEbookFiles(ebook_files)
         widget_helpers.addSeparator(self.content_group, self.content_width)
@@ -180,7 +202,7 @@ function BookDetailView:init()
 
     -- Chapters section
     local chapters = {}
-    if self.item.media and self.item.media.chapters then
+    if self.item.media and type(self.item.media.chapters) == "table" then
         chapters = self.item.media.chapters
     end
     if #chapters > 0 then
@@ -255,7 +277,11 @@ function BookDetailView:_addCoverArt()
         manifest.init()
         local book = manifest.getBook(item_id)
         if book and book.local_dir then
-            cover_path = book.local_dir .. "/cover.jpg"
+            local candidate = book.local_dir .. "/cover.jpg"
+            local lfs_mod = _G.lfs or (pcall(require, "lfs") and require("lfs"))
+            if lfs_mod and lfs_mod.attributes(candidate, "mode") == "file" then
+                cover_path = candidate
+            end
         end
     end
 
@@ -347,70 +373,207 @@ function BookDetailView:_addMetadata()
 end
 
 ------------------------------------------------------------------------
--- Download status badge
+-- Download status badge and action buttons
+-- Per-type status tracking:
+--   Audio and ebook have independent download states.
+--   Shows status badge + action buttons per type.
 ------------------------------------------------------------------------
 function BookDetailView:_addDownloadStatus()
     local item_id = self.item.id
-    local is_downloaded = false
+    local audio_state = "none"  -- "none", "complete", "incomplete", "partial"
+    local ebook_state = "none"
 
     if has_manifest then
         local book = manifest.getBook(item_id)
-        if book then
-            is_downloaded = true
+        if book and book.files then
+            for _, f in ipairs(book.files) do
+                local ftype = f.type or "audio"  -- backward compat
+                if ftype == "audio" then
+                    if audio_state == "none" then audio_state = f.status or "pending" end
+                    if f.status ~= "complete" then audio_state = "incomplete" end
+                elseif ftype == "ebook" then
+                    if f.status == "complete" then ebook_state = "complete" end
+                    if f.status == "partial" or f.status == "pending" then ebook_state = "incomplete" end
+                end
+            end
+            -- Refine audio_state
+            if audio_state ~= "none" and audio_state ~= "incomplete" then
+                audio_state = "complete"
+            end
         end
     end
 
-    if is_downloaded then
+    -- Check if there ARE audio files (from item data or manifest)
+    -- Show audio status if: (1) item has audioFiles, OR (2) manifest has audio files
+    -- If neither but we're on a detail page for an audiobook, show "not downloaded" state
+    local has_audio_files = (self.item.audioFiles and #self.item.audioFiles > 0)
+        or (self.item.media and type(self.item.media.audioFiles) == "table" and #self.item.media.audioFiles > 0)
+        or audio_state ~= "none"  -- manifest has audio-type files
+
+    -- If item has duration (audiobook) but no audioFiles in data,
+    -- still show the audio download section
+    if not has_audio_files and (self.item.media and self.item.media.duration
+        and self.item.media.duration > 0) then
+        has_audio_files = true
+        audio_state = "none"  -- not downloaded
+    end
+
+    -- Audio download status badge
+    if has_audio_files then
+        self:_addAudioDownloadStatus(audio_state)
+    end
+end
+
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+-- Audio download status sub-section
+------------------------------------------------------------------------
+function BookDetailView:_addAudioDownloadStatus(audio_state)
+    local item_id = self.item.id
+
+    if audio_state == "complete" then
+        -- Audio fully downloaded
         local badge = TextWidget:new{
-            text = "✓ " .. _("Downloaded"),
+            text = "✓ " .. _("Audio downloaded"),
             face = Font:getFace("cfont", 14),
             fgcolor = Blitbuffer.COLOR_DARK_GREEN,
         }
         table.insert(self.content_group, badge)
-    else
+
+        -- Show Delete button (self-contained _onDeleteBook)
+        table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
+        local delete_btn = TextWidget:new{
+            text = _("🗑 Delete audio"),
+            face = Font:getFace("cfont", 16),
+            fgcolor = Blitbuffer.COLOR_DARK_GRAY,
+        }
+        local tap_container = InputContainer:new{
+            dimen = Geom:new{
+                w = self.content_width,
+                h = delete_btn:getSize().h + Size.padding.default,
+            },
+        }
+        tap_container.ges_events.TapDelete = {
+            GestureRange:new{
+                ges = "tap",
+                range = tap_container.dimen,
+            },
+        }
+        tap_container.detail_ref = self.detail_ref
+        tap_container.captured_item = self.item
+        function tap_container:onTapDelete()
+            self.detail_ref:_onDeleteBook(self.captured_item, false)
+            return true
+        end
+        tap_container[1] = delete_btn
+        table.insert(self.content_group, tap_container)
+
+    elseif audio_state == "incomplete" then
+        -- Audio incomplete
         local badge = TextWidget:new{
-            text = _("Not downloaded"),
+            text = "⚠ " .. _("Audio download incomplete"),
             face = Font:getFace("cfont", 14),
             fgcolor = Blitbuffer.COLOR_DARK_GRAY,
         }
         table.insert(self.content_group, badge)
 
-        -- Show download button if callback provided
-        if self.on_download then
-            table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
-            local download_btn = TextWidget:new{
-                text = _("⬇ Download"),
-                face = Font:getFace("cfont", 16),
-                fgcolor = Blitbuffer.COLOR_BLUE,
-            }
-            local tap_container = InputContainer:new{
-                dimen = Geom:new{
-                    w = self.content_width,
-                    h = download_btn:getSize().h + Size.padding.default,
-                },
-            }
-            tap_container.ges_events.TapDownload = {
-                GestureRange:new{
-                    ges = "tap",
-                    range = tap_container.dimen,
-                },
-            }
-            tap_container.detail_ref = self.detail_ref
-            local item = self.item
-            local on_download_cb = self.on_download
-            function tap_container:onTapDownload()
-                if on_download_cb then
-                    on_download_cb(item)
-                end
-                return true
-            end
-            tap_container[1] = download_btn
-            table.insert(self.content_group, tap_container)
+        -- Show Resume button (self-contained _onDownloadBook)
+        table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
+        local resume_btn = TextWidget:new{
+            text = _("⬇ Resume audio"),
+            face = Font:getFace("cfont", 16),
+            fgcolor = Blitbuffer.COLOR_BLUE,
+        }
+        local tap_container = InputContainer:new{
+            dimen = Geom:new{
+                w = self.content_width,
+                h = resume_btn:getSize().h + Size.padding.default,
+            },
+        }
+        tap_container.ges_events.TapResume = {
+            GestureRange:new{
+                ges = "tap",
+                range = tap_container.dimen,
+            },
+        }
+        tap_container.detail_ref = self.detail_ref
+        tap_container.captured_item = self.item
+        function tap_container:onTapResume()
+            self.detail_ref:_onDownloadBook(self.captured_item)
+            return true
         end
+        tap_container[1] = resume_btn
+        table.insert(self.content_group, tap_container)
+
+        -- Show Delete button (self-contained _onDeleteBook)
+        table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
+        local delete_btn = TextWidget:new{
+            text = _("🗑 Delete audio"),
+            face = Font:getFace("cfont", 16),
+            fgcolor = Blitbuffer.COLOR_DARK_GRAY,
+        }
+        local tap_container = InputContainer:new{
+            dimen = Geom:new{
+                w = self.content_width,
+                h = delete_btn:getSize().h + Size.padding.default,
+            },
+        }
+        tap_container.ges_events.TapDelete = {
+            GestureRange:new{
+                ges = "tap",
+                range = tap_container.dimen,
+            },
+        }
+        tap_container.detail_ref = self.detail_ref
+        tap_container.captured_item = self.item
+        function tap_container:onTapDelete()
+            self.detail_ref:_onDeleteBook(self.captured_item, false)
+            return true
+        end
+        tap_container[1] = delete_btn
+        table.insert(self.content_group, tap_container)
+
+    else
+        -- Audio not downloaded
+        local badge = TextWidget:new{
+            text = _("Audio not downloaded"),
+            face = Font:getFace("cfont", 14),
+            fgcolor = Blitbuffer.COLOR_DARK_GRAY,
+        }
+        table.insert(self.content_group, badge)
+
+        -- Show download button (self-contained _onDownloadBook)
+        table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
+        local download_btn = TextWidget:new{
+            text = _("⬇ Download audio"),
+            face = Font:getFace("cfont", 16),
+            fgcolor = Blitbuffer.COLOR_BLUE,
+        }
+        local tap_container = InputContainer:new{
+            dimen = Geom:new{
+                w = self.content_width,
+                h = download_btn:getSize().h + Size.padding.default,
+            },
+        }
+        tap_container.ges_events.TapDownload = {
+            GestureRange:new{
+                ges = "tap",
+                range = tap_container.dimen,
+            },
+        }
+        tap_container.detail_ref = self.detail_ref
+        tap_container.captured_item = self.item
+        function tap_container:onTapDownload()
+            self.detail_ref:_onDownloadBook(self.captured_item)
+            return true
+        end
+        tap_container[1] = download_btn
+        table.insert(self.content_group, tap_container)
     end
 
     table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
 end
+
 
 ------------------------------------------------------------------------
 -- Section header helper
@@ -484,12 +647,41 @@ end
 function BookDetailView:_addEbookFiles(ebook_files)
     self:_addSectionHeader(_("Ebook / PDF Files"))
 
+    -- Check ebook download status from manifest
+    local ebook_status_map = {}  -- ino -> status
+    if has_manifest then
+        local book = manifest.getBook(self.item.id)
+        if book and book.files then
+            for _, f in ipairs(book.files) do
+                if f.type == "ebook" then
+                    ebook_status_map[f.ino] = f.status
+                end
+            end
+        end
+    end
+
+    local all_ebooks_complete = true
+    local any_ebook_incomplete = false
+
     for _, file in ipairs(ebook_files) do
         local format_str = string.upper(file.format or "???")
-        local file_text = string.format("  %s  %s  %s",
+        local status = ebook_status_map[file.ino]
+        local status_str = ""
+        if status == "complete" then
+            status_str = " ✓"
+        elseif status == "partial" then
+            status_str = " ⚠"
+            any_ebook_incomplete = true
+            all_ebooks_complete = false
+        else
+            all_ebooks_complete = false
+        end
+
+        local file_text = string.format("  %s  %s  %s%s",
             format_str,
             file.filename or _("Unknown file"),
-            widget_helpers.format_file_size(file.size))
+            widget_helpers.format_file_size(file.size),
+            status_str)
 
         local file_widget = TextWidget:new{
             text = file_text,
@@ -501,11 +693,112 @@ function BookDetailView:_addEbookFiles(ebook_files)
         table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
     end
 
+    -- Ebook download/delete buttons
+    if all_ebooks_complete and not any_ebook_incomplete then
+        -- All ebooks downloaded — show Open + Delete buttons
+        -- Resolve ebook file path from manifest
+        local ebook_path = nil
+        if has_manifest then
+            local book = manifest.getBook(self.item.id)
+            if book and book.local_dir then
+                for _, f in ipairs(book.files or {}) do
+                    if f.type == "ebook" and f.status == "complete" then
+                        ebook_path = book.local_dir .. "/" .. f.filename
+                        break
+                    end
+                end
+            end
+        end
+
+        -- Open Ebook button (always when path exists - self-contained _onOpenEbook)
+        if ebook_path then
+            table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
+            local open_btn = TextWidget:new{
+                text = _("Open Ebook"),
+                face = Font:getFace("cfont", 16),
+                fgcolor = Blitbuffer.COLOR_BLUE,
+            }
+            local open_container = InputContainer:new{
+                dimen = Geom:new{
+                    w = self.content_width,
+                    h = open_btn:getSize().h + Size.padding.default,
+                },
+            }
+            open_container.ges_events.TapOpenEbook = {
+                GestureRange:new{
+                    ges = "tap",
+                    range = open_container.dimen,
+                },
+            }
+            open_container.detail_ref = self.detail_ref
+            open_container.captured_ebook_path = ebook_path
+            function open_container:onTapOpenEbook()
+                self.detail_ref:_onOpenEbook(self.captured_ebook_path)
+                return true
+            end
+            open_container[1] = open_btn
+            table.insert(self.content_group, open_container)
+        end
+        -- Delete ebook button (self-contained _onDeleteBook)
+        table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
+        local delete_btn = TextWidget:new{
+            text = _("Delete ebook"),
+            face = Font:getFace("cfont", 16),
+            fgcolor = Blitbuffer.COLOR_DARK_GRAY,
+        }
+        local tap_container = InputContainer:new{
+            dimen = Geom:new{
+                w = self.content_width,
+                h = delete_btn:getSize().h + Size.padding.default,
+            },
+        }
+        tap_container.ges_events.TapDeleteEbook = {
+            GestureRange:new{
+                ges = "tap",
+                range = tap_container.dimen,
+            },
+        }
+        tap_container.detail_ref = self.detail_ref
+        tap_container.captured_item = self.item
+        function tap_container:onTapDeleteEbook()
+            self.detail_ref:_onDeleteBook(self.captured_item, true)
+            return true
+        end
+        tap_container[1] = delete_btn
+        table.insert(self.content_group, tap_container)
+    else
+        -- Not all ebooks downloaded — show download/resume button (self-contained _onDownloadBook)
+        table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
+        local btn_label = any_ebook_incomplete and _("⬇ Resume ebook") or _("⬇ Download Ebook")
+        local ebook_btn = TextWidget:new{
+            text = btn_label,
+            face = Font:getFace("cfont", 16),
+            fgcolor = Blitbuffer.COLOR_BLUE,
+        }
+        local tap_container = InputContainer:new{
+            dimen = Geom:new{
+                w = self.content_width,
+                h = ebook_btn:getSize().h + Size.padding.default,
+            },
+        }
+        tap_container.ges_events.TapEbook = {
+            GestureRange:new{
+                ges = "tap",
+                range = tap_container.dimen,
+            },
+        }
+        tap_container.detail_ref = self.detail_ref
+        tap_container.captured_item = self.item
+        function tap_container:onTapEbook()
+            self.detail_ref:_onDownloadBook(self.captured_item, true)
+            return true
+        end
+        tap_container[1] = ebook_btn
+        table.insert(self.content_group, tap_container)
+    end
+
     table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.default })
 end
-
-------------------------------------------------------------------------
--- Chapters section (tappable table of contents)
 ------------------------------------------------------------------------
 function BookDetailView:_addChapters(chapters)
     self:_addSectionHeader(_("Chapters"))
@@ -560,6 +853,293 @@ function BookDetailView:_addChapters(chapters)
 end
 
 ------------------------------------------------------------------------
+-- Download handler — self-contained on BookDetailView
+-- Mirrors library_browser:_onDownloadBook but uses self directly (no self_ref).
+------------------------------------------------------------------------
+function BookDetailView:_onDownloadBook(item, ebook_only)
+    abs_logger.info("Detail download requested: " .. (item.title or item.id)
+        .. (ebook_only and " (ebook)" or ""))
+    if not has_manifest or not has_config or not has_downloader then
+        UIManager:show(InfoMessage:new{ text = _("Download not available") })
+        return
+    end
+    manifest.init()
+
+    local result = nil
+
+    if ebook_only then
+        local ok, ebook_result = downloader.prepare_ebook_download(item, manifest, config)
+        if not ok then
+            UIManager:show(InfoMessage:new{
+                text = _("No ebook files found for this book."),
+                timeout = 3,
+            })
+            return
+        end
+        result = ebook_result
+    else
+        local existing_entry = manifest.getBook(item.id)
+        if existing_entry and manifest.hasIncompleteFiles(item.id) then
+            abs_logger.info("Resuming incomplete download: " .. (item.title or item.id))
+            result = existing_entry
+        else
+            local ok, prepare_result = downloader.prepare_download(item, manifest, config)
+            if not ok then
+                if prepare_result == "already_downloaded" then
+                    UIManager:show(ConfirmBox:new{
+                        text = _("Already downloaded. Re-download?"),
+                        ok_text = _("Re-download"),
+                        ok_callback = function()
+                            local lfs_mod = _G.lfs or require("lfs")
+                            local fs_del = {
+                                delete_file = function(path) os.remove(path) end,
+                                delete_dir = function(path) lfs_mod.rmdir(path) end,
+                            }
+                            downloader.delete_book(item.id, manifest, fs_del)
+                            self:_onDownloadBook(item)
+                        end,
+                    })
+                else
+                    UIManager:show(InfoMessage:new{ text = _("No audio files found for this book.") })
+                end
+                return
+            end
+            result = prepare_result
+        end
+    end
+
+    -- Calculate already-downloaded bytes (for resume progress display)
+    local function get_existing_bytes(entry, fs_impl)
+        local existing = 0
+        for _, f in ipairs(entry.files) do
+            if f.status == "partial" then
+                local size = fs_impl.get_file_size(entry.local_dir .. "/" .. f.filename)
+                if size then existing = existing + size end
+            end
+        end
+        return existing
+    end
+
+    local lfs_for_calc = _G.lfs or require("lfs")
+    local fs_calc = {
+        get_file_size = function(path)
+            local attr = lfs_for_calc.attributes(path)
+            return attr and attr.size or nil
+        end,
+    }
+
+    -- Free space check (only count remaining bytes for resume)
+    local total_sizes = downloader.calculate_download_size(result.files)
+    local already_on_disk = get_existing_bytes(result, fs_calc)
+    local needed = total_sizes - already_on_disk
+    if needed > 0 then
+        local dl_dir = config.get("download_dir") or "/tmp"
+        local free_bytes = downloader.get_free_space(dl_dir)
+        if free_bytes and not downloader.check_free_space(needed, free_bytes) then
+            UIManager:show(InfoMessage:new{
+                text = string.format(_("Insufficient disk space. Need %s, have %s."),
+                    downloader.format_bytes(needed), downloader.format_bytes(free_bytes)),
+                timeout = 5,
+            })
+            return
+        end
+    end
+    -- Download state + progress widget
+    local state = downloader.create_download_state()
+    state.start_time = os.time()
+    state.total_files = #result.files
+    state.total_bytes = total_sizes
+    state.bytes_downloaded = already_on_disk  -- resume-aware progress
+
+    if has_progress then
+        progress.show({
+            state = state,
+            on_cancel = function() state:cancel() end,
+        })
+    end
+    -- Build filesystem deps
+    local lfs_mod = _G.lfs or require("lfs")
+    local deps = {
+        manifest = manifest,
+        api = require("api"),
+        fs = {
+            mkdir = function(path)
+                local parts = {}
+                for part in path:gmatch("[^/]+") do
+                    table.insert(parts, part)
+                end
+                local current = ""
+                for _, part in ipairs(parts) do
+                    current = current .. "/" .. part
+                    if not lfs_mod.attributes(current) then
+                        lfs_mod.mkdir(current)
+                    end
+                end
+            end,
+            open = function(path, mode) return io.open(path, mode) end,
+            get_file_size = function(path)
+                local attr = lfs_mod.attributes(path)
+                return attr and attr.size or nil
+            end,
+        },
+        state = state,
+    }
+
+    local files_to_download = downloader.select_files_to_download(result.files)
+    local entry = result
+
+    local function schedule_next(idx)
+        if idx > #files_to_download or state:is_cancelled() then
+            if has_progress then progress.close() end
+            local msg = state:is_cancelled()
+                and _("Download cancelled.")
+                or _("Download complete!")
+            UIManager:show(InfoMessage:new{ text = msg, timeout = 3 })
+            if has_navigator then
+                nav.pop()
+                UIManager:scheduleIn(0.1, function()
+                    nav.push("detail", { item = item })
+                end)
+            end
+            return
+        end
+        local file = files_to_download[idx]
+        state.current_file = idx
+
+        local handle, err = downloader.start_chunked_download(entry, file, deps)
+        if not handle then
+            if has_progress then progress.close() end
+            UIManager:show(InfoMessage:new{
+                text = _("Download failed: ") .. tostring(err),
+                timeout = 5,
+            })
+            return
+        end
+        local function pump()
+            if state:is_cancelled() then
+                handle:cancel()
+                handle:finalize()
+                if has_progress then progress.close() end
+                UIManager:show(InfoMessage:new{ text = _("Download cancelled."), timeout = 3 })
+                if has_navigator then
+                    nav.pop()
+                    UIManager:scheduleIn(0.1, function()
+                        nav.push("detail", { item = item })
+                    end)
+                end
+                return
+            end
+            local still_running = handle:pump()
+            if has_progress then progress.update(state) end
+
+            if still_running then
+                UIManager:scheduleIn(0.05, pump)
+            else
+                local ok_final, reason = handle:finalize()
+                if not ok_final then
+                    if has_progress then progress.close() end
+                    UIManager:show(InfoMessage:new{
+                        text = _("Download failed: ") .. tostring(reason),
+                        timeout = 5,
+                    })
+                    return
+                end
+                UIManager:scheduleIn(0.05, function()
+                    schedule_next(idx + 1)
+                end)
+            end
+        end
+        UIManager:scheduleIn(0.05, pump)
+    end
+    UIManager:scheduleIn(0.1, function() schedule_next(1) end)
+end
+
+------------------------------------------------------------------------
+-- Delete handler — self-contained on BookDetailView
+-- Mirrors library_browser:_onDeleteBook but uses self directly (no self_ref).
+------------------------------------------------------------------------
+function BookDetailView:_onDeleteBook(item, ebook_only)
+    abs_logger.info("Detail delete requested: " .. (item.title or item.id)
+        .. (ebook_only and " (ebook only)" or ""))
+    if not has_manifest or not has_downloader then
+        UIManager:show(InfoMessage:new{ text = _("Delete not available") })
+        return
+    end
+    manifest.init()
+
+    if ebook_only then
+        self:_onDeleteEbookOnly(item)
+        return
+    end
+
+    UIManager:show(ConfirmBox:new{
+        text = _("Delete this downloaded book?"),
+        ok_text = _("Delete"),
+        ok_callback = function()
+            local lfs_mod = _G.lfs or require("lfs")
+            local fs = {
+                delete_file = function(path) os.remove(path) end,
+                delete_dir = function(path) lfs_mod.rmdir(path) end,
+            }
+            local ok = downloader.delete_book(item.id, manifest, fs)
+            if ok then
+                UIManager:show(InfoMessage:new{ text = _("Book deleted successfully."), timeout = 3 })
+            else
+                UIManager:show(InfoMessage:new{ text = _("Book not found in downloads."), timeout = 3 })
+            end
+            -- Refresh detail view by popping and re-pushing (no callbacks needed)
+            if has_navigator then
+                nav.pop()
+                UIManager:scheduleIn(0.1, function()
+                    nav.push("detail", { item = item })
+                end)
+            end
+        end,
+    })
+end
+
+------------------------------------------------------------------------
+-- Ebook-only delete helper — removes ebook files, preserves audio
+------------------------------------------------------------------------
+function BookDetailView:_onDeleteEbookOnly(item)
+    local entry = manifest.getBook(item.id)
+    if not entry or not entry.files then return end
+
+    local lfs_mod = _G.lfs or require("lfs")
+
+    -- Delete ebook files from disk and remove from manifest entry
+    local remaining_files = {}
+    for _, f in ipairs(entry.files) do
+        if f.type == "ebook" then
+            local path = entry.local_dir .. "/" .. f.filename
+            os.remove(path)
+        else
+            table.insert(remaining_files, f)
+        end
+    end
+    entry.files = remaining_files
+    manifest.addBook(entry)
+    UIManager:show(InfoMessage:new{ text = _("Ebook deleted."), timeout = 2 })
+
+    -- Refresh detail view (no callbacks needed)
+    if has_navigator then
+        nav.pop()
+        UIManager:scheduleIn(0.1, function()
+            nav.push("detail", { item = item })
+        end)
+    end
+end
+
+------------------------------------------------------------------------
+-- Open ebook in KOReader's ReaderUI
+-- Self-contained: no callback needed from caller.
+------------------------------------------------------------------------
+function BookDetailView:_onOpenEbook(filepath)
+    abs_logger.info("Detail opening ebook: " .. tostring(filepath))
+    local ReaderUI = require("apps/reader/readerui")
+    ReaderUI:showReader(filepath)
+end
+------------------------------------------------------------------------
 -- Close / navigation
 ------------------------------------------------------------------------
 function BookDetailView:onClose()
@@ -589,7 +1169,8 @@ function detail.show(data)
     local item = data.item
     if not item then return nil end
     local on_download = data.on_download
-
+    local on_delete = data.on_delete
+    local on_open_ebook = data.on_open_ebook
     abs_logger.info("Showing book detail: " .. (item.title or item.id or "unknown"))
 
     -- Initialize manifest for potential fallback
@@ -609,7 +1190,7 @@ function detail.show(data)
             UIManager:close(loading)
             local prepared, err = detail.prepare(item)
             if prepared then
-                local view = detail._renderView(prepared, on_download)
+                local view = detail._renderView(prepared, on_download, on_delete, on_open_ebook)
                 if has_navigator then
                     nav._setCurrent(view)
                 end
@@ -625,7 +1206,7 @@ function detail.show(data)
         -- Synchronous path
         local prepared, err = detail.prepare(item)
         if prepared then
-            return detail._renderView(prepared, on_download)
+            return detail._renderView(prepared, on_download, on_delete, on_open_ebook)
         else
             error_handler.show(err.type or "network", err.message or _("Unable to load book details."))
             return nil
@@ -636,10 +1217,12 @@ end
 ------------------------------------------------------------------------
 -- Render the detail view widget
 ------------------------------------------------------------------------
-function detail._renderView(item, on_download)
+function detail._renderView(item, on_download, on_delete, on_open_ebook)
     local view = BookDetailView:new{
         item = item,
         on_download = on_download,
+        on_delete = on_delete,
+        on_open_ebook = on_open_ebook,
     }
     UIManager:show(view)
     UIManager:setDirty(view, "full")
@@ -667,6 +1250,25 @@ end
 -- (for offline viewing of downloaded books)
 ------------------------------------------------------------------------
 function detail._itemFromManifest(item, book)
+    -- Reconstruct ebookFile from manifest if ebook files exist
+    local ebookFile = nil
+    if book.files then
+        for _, f in ipairs(book.files) do
+            if f.type == "ebook" then
+                ebookFile = {
+                    ino = f.ino,
+                    metadata = {
+                        filename = f.filename,
+                        ext = "." .. (f.filename:match("%.(%w+)$") or ""),
+                        size = f.size,
+                    },
+                    ebookFormat = f.filename:match("%.(%w+)$") or "",
+                }
+                break  -- use first ebook file
+            end
+        end
+    end
+
     return {
         id = item.id or book.abs_item_id,
         title = book.title or item.title,
@@ -680,6 +1282,7 @@ function detail._itemFromManifest(item, book)
                 authorName = book.author,
             },
             chapters = book.chapters or {},
+            ebookFile = ebookFile,
         },
         audioFiles = {},  -- Manifest doesn't track ABS file objects
         ebookFiles = {},  -- Manifest doesn't track ABS file objects

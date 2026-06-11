@@ -33,6 +33,10 @@ local cache_dir = nil
 
 --- Initialize the cover cache with a directory path
 -- @param dir string  directory to store cached cover images
+function cover_cache.isInitialized()
+    return cache_dir ~= nil
+end
+
 function cover_cache.init(dir)
     cache_dir = dir
     abs_logger.verbose("Cover cache initialized: " .. tostring(dir))

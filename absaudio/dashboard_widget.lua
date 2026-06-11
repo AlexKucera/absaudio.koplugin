@@ -15,8 +15,12 @@ local FocusManager = require("ui/widget/focusmanager")
 local FrameContainer = require("ui/widget/container/framecontainer")
 local Geom = require("ui/geometry")
 local GestureRange = require("ui/gesturerange")
+local HorizontalGroup = require("ui/widget/horizontalgroup")
+local HorizontalSpan = require("ui/widget/horizontalspan")
+local ImageWidget = require("ui/widget/imagewidget")
 local InfoMessage = require("ui/widget/infomessage")
 local InputContainer = require("ui/widget/container/inputcontainer")
+local LeftContainer = require("ui/widget/container/leftcontainer")
 local LineWidget = require("ui/widget/linewidget")
 local ScrollableContainer = require("ui/widget/container/scrollablecontainer")
 local Size = require("ui/size")
@@ -44,6 +48,10 @@ end
 
 local has_library_store, library_store = pcall(require, "absaudio/library_store")
 local has_navigator, nav = pcall(require, "absaudio/navigator")
+local has_cover_cache, cover_cache = pcall(require, "absaudio/cover_cache")
+local has_downloader, downloader = pcall(require, "absaudio/downloader")
+local has_abs_config, abs_config = pcall(require, "absaudio/config")
+local has_progress, progress = pcall(require, "absaudio/download_progress")
 
 local dashboard = {}
 
@@ -116,6 +124,12 @@ function DashboardView:init()
     self.screen_width = screen_size.w
     self.screen_height = screen_size.h
     self.content_width = self.screen_width - 2 * Size.padding.large
+
+    -- Initialize cover cache for thumbnail rendering
+    if has_cover_cache and not cover_cache.isInitialized() then
+        local DataStorage = require("datastorage")
+        cover_cache.init(DataStorage:getSettingsDir() .. "/absaudio_covers")
+    end
 
     -- Build the dashboard content
     self.content_group = VerticalGroup:new{ align = "left" }
@@ -228,18 +242,13 @@ function DashboardView:_addResumeSection()
             recent_book.author or "",
             progress_text)
 
-        local info_widget = TextBoxWidget:new{
-            text = info_text,
-            face = Font:getFace("cfont", 15),
-            width = self.content_width,
-            fgcolor = Blitbuffer.COLOR_BLACK,
-        }
+        local book_row = self:_buildBookRow(recent_book, info_text)
 
         -- Wrap in a tappable container
         local tap_container = InputContainer:new{
             dimen = Geom:new{
                 w = self.content_width,
-                h = info_widget:getSize().h,
+                h = Screen:scaleBySize(100) + 2 * Size.padding.small,
             },
         }
         tap_container.ges_events.TapResume = {
@@ -254,7 +263,7 @@ function DashboardView:_addResumeSection()
             self.dashboard_ref:_onResumeBook(book)
             return true
         end
-        tap_container[1] = info_widget
+        tap_container[1] = book_row
         table.insert(self.content_group, tap_container)
     else
         local empty = TextWidget:new{
@@ -266,6 +275,67 @@ function DashboardView:_addResumeSection()
     end
 
     table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.default })
+end
+
+--- Build a book row widget: [cover thumbnail 80×100] [padding] [title + progress text]
+-- Matches library browser's _addBookRow layout for visual consistency.
+function DashboardView:_buildBookRow(book, title_text)
+    local thumb_width = Screen:scaleBySize(80)
+    local thumb_height = Screen:scaleBySize(100)
+
+    -- Resolve cover image or placeholder
+    local cover_widget
+    local cover_path = nil
+    if has_cover_cache and book.abs_item_id then
+        if cover_cache.hasCachedCover(book.abs_item_id) then
+            cover_path = cover_cache.getCoverPath(book.abs_item_id)
+        end
+    end
+
+    if cover_path then
+        cover_widget = ImageWidget:new{
+            file = cover_path,
+            width = thumb_width,
+            height = thumb_height,
+            scale_factor = 0,
+        }
+    else
+        -- Gray placeholder matching library browser fallback
+        cover_widget = FrameContainer:new{
+            width = thumb_width,
+            height = thumb_height,
+            background = Blitbuffer.COLOR_LIGHT_GRAY,
+            bordersize = 0,
+            padding = 0,
+            CenterContainer:new{
+                dimen = Geom:new{ w = thumb_width, h = thumb_height },
+                TextWidget:new{
+                    text = "🎵",
+                    face = Font:getFace("cfont", Screen:scaleBySize(22)),
+                    fgcolor = Blitbuffer.COLOR_DARK_GRAY,
+                },
+            },
+        }
+    end
+
+    -- Text area: title + author + progress
+    local text_area_width = self.content_width - thumb_width - Size.padding.default
+    local info_widget = TextBoxWidget:new{
+        text = title_text,
+        face = Font:getFace("cfont", 14),
+        width = text_area_width,
+    }
+
+    -- Assemble: [cover] [padding] [text]
+    return HorizontalGroup:new{
+        align = "center",
+        cover_widget,
+        HorizontalSpan:new{ width = Size.padding.default },
+        LeftContainer:new{
+            dimen = Geom:new{ w = text_area_width, h = thumb_height },
+            info_widget,
+        },
+    }
 end
 
 function DashboardView:_addDownloadedBooksSection()
@@ -323,12 +393,29 @@ function DashboardView:_addDownloadedBooksSection()
             local badge = has_incomplete and " ⚠ Resume download" or ""
             local title_text = (book.title or "Unknown") .. "\n  " .. progress_text .. badge
 
-            local book_widget = TextBoxWidget:new{
-                text = title_text,
-                face = Font:getFace("cfont", 14),
-                width = self.content_width,
+            local book_row = self:_buildBookRow(book, title_text)
+
+            -- Wrap in tappable container to navigate to book detail
+            local tap_container = InputContainer:new{
+                dimen = Geom:new{
+                    w = self.content_width,
+                    h = Screen:scaleBySize(100) + Size.padding.small,
+                },
             }
-            table.insert(self.content_group, book_widget)
+            tap_container.ges_events.TapBook = {
+                GestureRange:new{
+                    ges = "tap",
+                    range = tap_container.dimen,
+                },
+            }
+            tap_container.dashboard_ref = self.dashboard_ref
+            tap_container.book = book
+            function tap_container:onTapBook()
+                self.dashboard_ref:_onBookTap(self.book)
+                return true
+            end
+            tap_container[1] = book_row
+            table.insert(self.content_group, tap_container)
             table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
         end
 
@@ -501,6 +588,13 @@ function DashboardView:_onOpenSettings()
         })
     end
 end
+function DashboardView:onClose()
+    if has_navigator then
+        nav.pop()
+    else
+        UIManager:close(self)
+    end
+end
 
 function DashboardView:_onSyncNow()
     abs_logger.info("Sync Now tapped")
@@ -526,23 +620,37 @@ function DashboardView:_onExportDiagnostics()
     end
 end
 
-function DashboardView:onClose()
-    UIManager:close(self)
-    return true
-end
+function DashboardView:_onBookTap(book)
+    abs_logger.info("Book tapped from dashboard: " .. (book.title or "unknown"))
+    if has_navigator then
+        -- Build a rich item from manifest data so detail view can show all sections.
+        local detail_item = {
+            id = book.abs_item_id,
+            title = book.title,
+            author = book.author,
+            duration = book.duration or 0,
+            chapters = book.chapters or {},
+            files = book.files,
+            local_dir = book.local_dir,
+            media = {
+                duration = book.duration or 0,
+                chapters = book.chapters or {},
+            },
+        }
+        if book.audioFiles then detail_item.audioFiles = book.audioFiles end
+        if book.ebookFiles then detail_item.ebookFiles = book.ebookFiles end
+        if book.media and book.media.ebookFile then
+            detail_item.media.ebookFile = book.media.ebookFile
+        end
 
-function DashboardView:onSwipe(arg, ges_ev)
-    if ges_ev.direction == "south" then
-        self:onClose()
+        nav.push("detail", {
+            item = detail_item,
+        })
     end
-    return true
 end
 
-function DashboardView:onTapClose()
-    -- Only close if tap is outside the content area (we let ScrollableContainer handle inside taps)
-    -- For now, use back key to close
-    return false
-end
+------------------------------------------------------------------------
+-- Public: show the dashboard
 
 ------------------------------------------------------------------------
 -- Public: show the dashboard

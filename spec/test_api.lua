@@ -425,6 +425,27 @@ run_test("downloadFile returns status code on success", function()
     mock.assert_equals(log.url:match("token=tok"), "token=tok", "should include token in URL query")
 end)
 
+run_test("downloadFile merges extra_headers into request", function()
+    local chunks = {}
+    local sink = function(chunk)
+        if chunk then table.insert(chunks, chunk) end
+        return true
+    end
+    local transport = mock.create_transport_stub({
+        { status_code = 200, body = "binary-data" },
+    })
+    api.init("https://abs.example.com", "tok", transport)
+
+    local ok, result = api.downloadFile("item1", "ino123", sink, {
+        ["Range"] = "bytes=5000-",
+    })
+    mock.assert_equals(ok, true, "downloadFile should succeed")
+
+    local log = transport._call_log[1]
+    mock.assert_equals(log.headers["Accept"], "*/*", "should keep default Accept header")
+    mock.assert_equals(log.headers["Range"], "bytes=5000-", "should include Range header")
+end)
+
 run_test("getProgress returns progress data", function()
     local transport = mock.create_transport_stub({
         { status_code = 200, body = '{"currentTime":50,"duration":100}' },

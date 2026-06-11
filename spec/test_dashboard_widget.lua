@@ -62,17 +62,34 @@ package.loaded["ui/widget/verticalgroup"] = make_widget_stub()
 package.loaded["ui/widget/verticalspan"] = make_widget_stub()
 package.loaded["ui/widget/infomessage"] = make_widget_stub()
 
+-- KOReader datastorage (provides settings directory path)
+package.loaded["datastorage"] = {
+    getSettingsDir = function() return "/tmp/test_settings" end,
+}
+
+package.loaded["ui/widget/imagewidget"] = make_widget_stub()
+package.loaded["ui/widget/horizontalgroup"] = make_widget_stub()
+package.loaded["ui/widget/horizontalspan"] = make_widget_stub()
+package.loaded["ui/widget/container/leftcontainer"] = make_widget_stub()
+
 local mock_device = {
     hasKeys = function() return true end,
     isTouchDevice = function() return true end,
     input = { group = { Back = "Back" } },
     screen = {
         getSize = function() return { w = 600, h = 800 } end,
-        scaleBySize = function(n) return n end,
+        scaleBySize = function(_, n) return n end,  -- colon syntax passes self as first arg
     },
 }
 package.loaded["device"] = mock_device
 package.loaded["ui/device"] = mock_device
+_G.Device = mock_device  -- KOReader uses Device (capital D) as global
+
+-- Screen global (used directly by dashboard for scaleBySize)
+_G.Screen = mock_device.screen
+_G.Screen = {
+    scaleBySize = function(n) return n end,
+}
 
 package.loaded["ui/font"] = {
     getFace = function(name, size) return { name = name, size = size } end,
@@ -150,6 +167,15 @@ package.loaded["absaudio/navigator"] = {
     pop = function() end,
     reset = function() end,
     _reset = function() end,
+}
+
+
+package.loaded["absaudio/cover_cache"] = {
+    isInitialized = function() return false end,
+    init = function() end,
+    getCoverPath = function(id) return "/fake/cache/" .. id .. ".jpg" end,
+    hasCachedCover = function(id) return true end,
+    fetchAndCache = function(id) return true, "/fake/cache/" .. id .. ".jpg" end,
 }
 
 ------------------------------------------------------------------------
@@ -542,7 +568,437 @@ run_test("_onBrowseLibrary calls nav.push('browser') instead of nested callbacks
 end)
 
 -- ============================================================
+-- Test: _onBookTap pushes detail screen via navigator
+-- ============================================================
+run_test("_onBookTap pushes 'detail' screen with item.id mapped from abs_item_id", function()
+    local pushed = {}
+    package.loaded["absaudio/navigator"].push = function(name, data)
+        table.insert(pushed, { name = name, data = data })
+    end
+
+    local shown_widgets = {}
+    local orig_show = package.loaded["ui/uimanager"].show
+    package.loaded["ui/uimanager"].show = function(self, widget)
+        table.insert(shown_widgets, widget)
+    end
+
+    dashboard.show({})
+    local view = shown_widgets[#shown_widgets]
+
+    -- Simulate tapping a manifest book with abs_item_id
+    local book = {
+        abs_item_id = "abc-123",
+        title = "Test Downloaded Book",
+        author = "Test Author",
+    }
+    view:_onBookTap(book)
+
+    mock.assert_equals(#pushed, 1, "should have called nav.push once")
+    mock.assert_equals(pushed[1].name, "detail", "should push 'detail' screen")
+    mock.assert_equals(pushed[1].data.item.id, "abc-123", "item.id should come from abs_item_id")
+    mock.assert_equals(pushed[1].data.item.title, "Test Downloaded Book", "item.title should be preserved")
+
+    package.loaded["ui/uimanager"].show = orig_show
+    package.loaded["absaudio/navigator"].push = function() end
+end)
+
+
+-- Test: _onBookTap enriches item data but does NOT wire action callbacks
+-- ============================================================
+run_test("_onBookTap enriches item data without action callbacks", function()
+    local pushed = {}
+    package.loaded["absaudio/navigator"].push = function(name, data)
+        table.insert(pushed, { name = name, data = data })
+    end
+
+    local shown_widgets = {}
+    local orig_show = package.loaded["ui/uimanager"].show
+    package.loaded["ui/uimanager"].show = function(self, widget)
+        table.insert(shown_widgets, widget)
+    end
+
+    dashboard.show({})
+    local view = shown_widgets[#shown_widgets]
+
+    -- Book with manifest fields (duration, chapters, files)
+    local book = {
+        abs_item_id = "book-456",
+        title = "Enriched Book",
+        author = "Rich Author",
+        duration = 3600,
+        chapters = { { title = "Ch1", start = 0, ["end"] = 1800 } },
+        files = {{ filename = "test.mp3", type = "audio", status = "complete" }},
+        local_dir = "/tmp/audiobooks/Author_Book",
+    }
+    view:_onBookTap(book)
+
+    mock.assert_equals(#pushed, 1, "should have called nav.push once")
+    local data = pushed[1].data
+
+    -- Detail view owns its behavior — no callbacks needed from caller
+    mock.assert_equals(data.on_download, nil,
+        "on_download should be nil (detail view is self-contained)")
+    mock.assert_equals(data.on_delete, nil,
+        "on_delete should be nil (detail view is self-contained)")
+    mock.assert_equals(data.on_open_ebook, nil,
+        "on_open_ebook should be nil (detail view is self-contained)")
+
+    -- Item should be enriched with manifest fields
+    mock.assert_equals(data.item.id, "book-456", "item.id from abs_item_id")
+    mock.assert_equals(data.item.duration, 3600, "duration should be passed through")
+    mock.assert_equals(#data.item.chapters, 1, "chapters should be passed through")
+    mock.assert_equals(data.item.local_dir, "/tmp/audiobooks/Author_Book", "local_dir should be passed through")
+    mock.assert_equals(data.item.media.duration, 3600, "media.duration should mirror duration")
+    mock.assert_equals(#data.item.media.chapters, 1, "media.chapters should mirror chapters")
+
+    package.loaded["ui/uimanager"].show = orig_show
+    package.loaded["absaudio/navigator"].push = function() end
+end)
+
+run_test("downloaded book entries are wrapped in tappable containers that call _onBookTap", function()
+    -- Set up manifest mock with two books (same pattern as other tests)
+    setup_manifest_mock(nil, {
+        { abs_item_id = "book-1", title = "Alpha Book", author = "Author A" },
+        { abs_item_id = "book-2", title = "Beta Book", author = "Author B" },
+    })
+
+    -- Reload module to pick up new manifest mock
+    package.loaded["absaudio/dashboard_widget"] = nil
+    local dash = require("absaudio/dashboard_widget")
+
+    local pushed = {}
+    package.loaded["absaudio/navigator"].push = function(name, data)
+        table.insert(pushed, { name = name, data = data })
+    end
+
+    local shown_widgets = {}
+    local orig_show = package.loaded["ui/uimanager"].show
+    package.loaded["ui/uimanager"].show = function(self, widget)
+        table.insert(shown_widgets, widget)
+    end
+
+    dash.show({})
+    local view = shown_widgets[#shown_widgets]
+
+    -- Find tappable containers for books in the content_group
+    local tap_containers = {}
+    for _, el in ipairs(view.content_group) do
+        if type(el) == "table" and el.ges_events and el.ges_events.TapBook then
+            table.insert(tap_containers, el)
+        end
+    end
+
+    mock.assert_equals(#tap_containers, 2, "should have 2 tappable book entries")
+
+    -- Simulate tapping the first book
+    tap_containers[1].onTapBook(tap_containers[1])
+    mock.assert_equals(#pushed, 1, "should have called nav.push once")
+    mock.assert_equals(pushed[1].name, "detail", "should push 'detail' screen")
+    mock.assert_equals(pushed[1].data.item.id, "book-1", "item.id should be book-1's abs_item_id")
+
+    -- Simulate tapping the second book
+    tap_containers[2].onTapBook(tap_containers[2])
+    mock.assert_equals(#pushed, 2, "should have called nav.push twice")
+    mock.assert_equals(pushed[2].data.item.id, "book-2", "item.id should be book-2's abs_item_id")
+
+    package.loaded["ui/uimanager"].show = orig_show
+    package.loaded["absaudio/navigator"].push = function() end
+end)
+
+-- ============================================================
+-- Test: dashboard book entries include cover widget when cover is cached
+-- ============================================================
+run_test("downloaded book entry includes cover widget when cover_cache has cover", function()
+    -- Set up manifest with a book that has abs_item_id (needed for cover cache lookup)
+    setup_manifest_mock(nil, {
+        {
+            abs_item_id = "book-cover-1",
+            title = "Book With Cover",
+            author = "Cover Author",
+            duration = 3600,
+            current_time = 1800,
+        },
+    })
+
+    -- Reload module to pick up new manifest mock
+    package.loaded["absaudio/dashboard_widget"] = nil
+    local dash = require("absaudio/dashboard_widget")
+
+    -- Ensure cover_cache mock says this book has a cover
+    package.loaded["absaudio/cover_cache"].hasCachedCover = function(id)
+        return id == "book-cover-1"
+    end
+
+    local shown_widgets = {}
+    local orig_show = package.loaded["ui/uimanager"].show
+    package.loaded["ui/uimanager"].show = function(self, widget)
+        table.insert(shown_widgets, widget)
+    end
+
+    dash.show({})
+    local view = shown_widgets[#shown_widgets]
+
+    -- Verify the view was created and has content
+    mock.assert_equals(view ~= nil, true, "should have created a view")
+    mock.assert_equals(#view.content_group > 0, true, "content_group should have elements")
+
+    -- Find tappable containers for books in the content_group
+    local tap_containers = {}
+    for _, el in ipairs(view.content_group) do
+        if type(el) == "table" and el.ges_events and el.ges_events.TapBook then
+            table.insert(tap_containers, el)
+        end
+    end
+    
+    mock.assert_equals(#tap_containers, 1, "should have 1 tappable book entry")
+    
+    -- The book entry should use a HorizontalGroup layout (cover + text)
+    local book_entry = tap_containers[1]
+    local layout = book_entry[1]  -- first child of InputContainer
+    mock.assert_equals(layout ~= nil, true, "book entry should have content")
+    
+    -- The layout must be a HorizontalGroup (cover image left, text right)
+    local is_hg_layout = type(layout) == "table" and layout.align == "center"
+    mock.assert_equals(is_hg_layout, true, "book entry should use HorizontalGroup for cover+text layout")
+    
+    package.loaded["ui/uimanager"].show = orig_show
+end)
+
+-- ============================================================
+-- Test: book entry shows gray placeholder when no cover is cached
+-- ============================================================
+run_test("downloaded book entry shows placeholder when cover_cache has no cover", function()
+    -- Set up manifest with a book that has abs_item_id but NO cached cover
+    setup_manifest_mock(nil, {
+        {
+            abs_item_id = "book-no-cover-1",
+            title = "Book Without Cover",
+            author = "No Cover Author",
+            duration = 3600,
+            current_time = 0,
+        },
+    })
+
+    -- Reload module to pick up new manifest mock
+    package.loaded["absaudio/dashboard_widget"] = nil
+    local dash = require("absaudio/dashboard_widget")
+
+    -- Configure cover_cache mock to report NO cover for this book
+    package.loaded["absaudio/cover_cache"].hasCachedCover = function(id)
+        return false  -- no covers available
+    end
+
+    local shown_widgets = {}
+    local orig_show = package.loaded["ui/uimanager"].show
+    package.loaded["ui/uimanager"].show = function(self, widget)
+        table.insert(shown_widgets, widget)
+    end
+
+    dash.show({})
+    local view = shown_widgets[#shown_widgets]
+
+    mock.assert_equals(view ~= nil, true, "should have created a view")
+
+    -- Find tappable book entries
+    local tap_containers = {}
+    for _, el in ipairs(view.content_group) do
+        if type(el) == "table" and el.ges_events and el.ges_events.TapBook then
+            table.insert(tap_containers, el)
+        end
+    end
+
+    mock.assert_equals(#tap_containers, 1, "should have 1 tappable book entry")
+
+    -- The layout must still be HorizontalGroup even without cover (placeholder + text)
+    local book_entry = tap_containers[1]
+    local layout = book_entry[1]
+    local is_hg_layout = type(layout) == "table" and layout.align == "center"
+    mock.assert_equals(is_hg_layout, true, "book entry should use HorizontalGroup even without cover")
+
+    -- The first child of the HorizontalGroup should be the placeholder (FrameContainer stub)
+    -- Our stub returns opts table, so check for background field (placeholder has it)
+    local first_child = layout[1]  -- cover_widget or placeholder
+    mock.assert_equals(first_child ~= nil, true, "layout should have a first child (cover or placeholder)")
+
+    package.loaded["ui/uimanager"].show = orig_show
+end)
+
+-- ============================================================
+-- Test: resume section uses cover row layout when recent book has cover
+-- ============================================================
+run_test("resume section uses HorizontalGroup layout when book has cover", function()
+    -- Set up manifest with a recent book that has a cached cover
+    setup_manifest_mock({
+        abs_item_id = "resume-cover-1",
+        title = "Resume Book With Cover",
+        author = "Resume Author",
+        duration = 7200,
+        current_time = 3600,
+    }, nil)
+
+    -- Reload module to pick up new manifest mock
+    package.loaded["absaudio/dashboard_widget"] = nil
+    local dash = require("absaudio/dashboard_widget")
+
+    -- Ensure cover_cache reports this book has a cover
+    package.loaded["absaudio/cover_cache"].hasCachedCover = function(id)
+        return id == "resume-cover-1"
+    end
+
+    local shown_widgets = {}
+    local orig_show = package.loaded["ui/uimanager"].show
+    package.loaded["ui/uimanager"].show = function(self, widget)
+        table.insert(shown_widgets, widget)
+    end
+
+    dash.show({})
+    local view = shown_widgets[#shown_widgets]
+
+    mock.assert_equals(view ~= nil, true, "should have created a view")
+
+    -- Find tappable resume container (TapResume event)
+    local resume_containers = {}
+    for _, el in ipairs(view.content_group) do
+        if type(el) == "table" and el.ges_events and el.ges_events.TapResume then
+            table.insert(resume_containers, el)
+        end
+    end
+
+    mock.assert_equals(#resume_containers, 1, "should have 1 tappable resume entry")
+
+    -- The resume entry should use HorizontalGroup layout (cover + text)
+    local resume_entry = resume_containers[1]
+    local layout = resume_entry[1]
+    local is_hg_layout = type(layout) == "table" and layout.align == "center"
+    mock.assert_equals(is_hg_layout, true, "resume entry should use HorizontalGroup for cover+text layout")
+
+    package.loaded["ui/uimanager"].show = orig_show
+end)
+
+-- ============================================================
+-- Test: book without abs_item_id renders without crash (placeholder only)
+-- ============================================================
+run_test("book without abs_item_id renders placeholder without crash", function()
+    -- Set up manifest with a book that has NO abs_item_id (legacy data)
+    setup_manifest_mock(nil, {
+        {
+            -- No abs_item_id field — simulates legacy/missing data
+            title = "Legacy Book",
+            author = "Unknown Author",
+            duration = 1800,
+            current_time = 900,
+        },
+    })
+
+    -- Reload module to pick up new manifest mock
+    package.loaded["absaudio/dashboard_widget"] = nil
+    local dash = require("absaudio/dashboard_widget")
+
+    local shown_widgets = {}
+    local orig_show = package.loaded["ui/uimanager"].show
+    package.loaded["ui/uimanager"].show = function(self, widget)
+        table.insert(shown_widgets, widget)
+    end
+
+    -- Should NOT throw an error even though abs_item_id is missing
+    local ok, err = pcall(dash.show, {})
+    mock.assert_equals(ok, true, "should not crash when book lacks abs_item_id (error: " .. tostring(err) .. ")")
+
+    local view = shown_widgets[#shown_widgets]
+    mock.assert_equals(view ~= nil, true, "should have created a view despite missing abs_item_id")
+
+    -- Should still have a tappable book entry with HorizontalGroup layout
+    local tap_containers = {}
+    for _, el in ipairs(view.content_group) do
+        if type(el) == "table" and el.ges_events and el.ges_events.TapBook then
+            table.insert(tap_containers, el)
+        end
+    end
+
+    mock.assert_equals(#tap_containers, 1, "should have 1 tappable book entry for legacy book")
+
+    local layout = tap_containers[1][1]
+    local is_hg_layout = type(layout) == "table" and layout.align == "center"
+    mock.assert_equals(is_hg_layout, true, "legacy book entry should still use HorizontalGroup layout")
+
+    package.loaded["ui/uimanager"].show = orig_show
+end)
+
+
+-- ============================================================
+-- Tests: Dashboard is navigation-only — no download/delete handlers
+-- ============================================================
+
+run_test("_onBookTap passes correct action callbacks from dashboard", function()
+    local pushed = {}
+    package.loaded["absaudio/navigator"].push = function(name, data)
+        table.insert(pushed, { name = name, data = data })
+    end
+
+    local shown_widgets = {}
+    local orig_show = package.loaded["ui/uimanager"].show
+    package.loaded["ui/uimanager"].show = function(self, widget)
+        table.insert(shown_widgets, widget)
+    end
+
+    dashboard.show({})
+    local view = shown_widgets[#shown_widgets]
+
+    -- Book with full manifest data
+    local book = {
+        abs_item_id = "book-nav-only",
+        title = "Nav Only Book",
+        author = "Nav Author",
+        duration = 3600,
+        chapters = { { title = "Ch1", start = 0, ["end"] = 1800 } },
+        files = {{ filename = "test.mp3", type = "audio", status = "complete" }},
+        local_dir = "/tmp/books/nav_only",
+    }
+    view:_onBookTap(book)
+
+    mock.assert_equals(#pushed, 1, "should have called nav.push once")
+    local data = pushed[1].data
+
+    -- Detail view owns its behavior — callers do NOT wire callbacks
+    mock.assert_equals(data.on_download, nil,
+        "on_download should be nil (detail is self-contained)")
+    mock.assert_equals(data.on_delete, nil,
+        "on_delete should be nil (detail is self-contained)")
+    mock.assert_equals(data.on_open_ebook, nil,
+        "on_open_ebook should be nil (detail is self-contained)")
+
+    -- Item should still be enriched with manifest data for display
+    mock.assert_equals(data.item.id, "book-nav-only", "item.id should still be mapped from abs_item_id")
+    mock.assert_equals(data.item.title, "Nav Only Book", "title should still be passed through")
+
+    package.loaded["ui/uimanager"].show = orig_show
+    package.loaded["absaudio/navigator"].push = function() end
+end)
+
+run_test("DashboardView does NOT have download/delete handlers (owned by book_detail)", function()
+    local shown_widgets = {}
+    local orig_show = package.loaded["ui/uimanager"].show
+    package.loaded["ui/uimanager"].show = function(self, widget)
+        table.insert(shown_widgets, widget)
+    end
+    dashboard.show({})
+    local view = shown_widgets[#shown_widgets]
+
+    -- Dashboard is navigation-only — handlers live in book_detail now
+    mock.assert_equals(view._onDownloadBook, nil,
+        "_onDownloadBook should NOT exist on dashboard (lives in book_detail)")
+    mock.assert_equals(view._onDeleteBook, nil,
+        "_onDeleteBook should NOT exist on dashboard (lives in book_detail)")
+    mock.assert_equals(view._onOpenEbook, nil,
+        "_onOpenEbook should NOT exist on dashboard (lives in book_detail)")
+
+    package.loaded["ui/uimanager"].show = orig_show
+end)
+
+-- ============================================================
+-- Tests: Dashboard is navigation-only — detail view owns its behavior
 -- Summary
+-- ============================================================
 -- ============================================================
 print(string.format("\n%d passed, %d failed", passed, failed))
 
