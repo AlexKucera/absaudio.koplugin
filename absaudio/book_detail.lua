@@ -38,6 +38,7 @@ local config = require("config")
 local abs_logger = require("abs_logger")
 local error_handler = require("error_handler")
 local widget_helpers = require("absaudio/widget_helpers")
+local has_fs_helpers, fs_helpers = pcall(require, "absaudio/fs_helpers")
 
 -- Try to load dependencies
 local has_manifest, manifest = pcall(require, "manifest")
@@ -964,16 +965,8 @@ function BookDetailView:_onDownloadBook(item, ebook_only)
         api = require("api"),
         fs = {
             mkdir = function(path)
-                local parts = {}
-                for part in path:gmatch("[^/]+") do
-                    table.insert(parts, part)
-                end
-                local current = ""
-                for _, part in ipairs(parts) do
-                    current = current .. "/" .. part
-                    if not lfs_mod.attributes(current) then
-                        lfs_mod.mkdir(current)
-                    end
+                if has_fs_helpers then
+                    fs_helpers.mkdir_p(path)
                 end
             end,
             open = function(path, mode) return io.open(path, mode) end,

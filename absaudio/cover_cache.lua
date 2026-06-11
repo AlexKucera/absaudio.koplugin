@@ -25,6 +25,8 @@ elseif type(_G.lfs) == "table" and _G.lfs.mkdir then
 end
 local has_api, api = pcall(require, "api")
 local ltn12_ok, ltn12 = pcall(require, "ltn12")
+local fs_helpers = pcall(require, "absaudio/fs_helpers")
+local has_fs_helpers, fs_helpers = pcall(require, "absaudio/fs_helpers")
 
 local cover_cache = {}
 
@@ -71,33 +73,13 @@ function cover_cache.fetchAndCache(item_id)
     end
 
     -- Ensure cache directory exists (recursive, like mkdir -p)
-    if not lfs_ok then
-        abs_logger.warn("lfs module not available — cannot create cache directory")
-    end
-    if lfs_ok and cache_dir then
-        local mode = lfs.attributes(cache_dir, "mode")
-        if mode ~= "directory" then
-            -- Create each missing path component (mkdir -p)
-            local parts = {}
-            for part in cache_dir:gmatch("[^/]+") do
-                if part ~= "." then
-                    table.insert(parts, part)
-                end
-            end
-            -- Preserve leading / for absolute paths, or use relative
-            local path_so_far = cache_dir:match("^/") and "/" or ""
-            for _, part in ipairs(parts) do
-                path_so_far = path_so_far .. part .. "/"
-                local dir = path_so_far:sub(1, -2) -- strip trailing /
-                if lfs.attributes(dir, "mode") ~= "directory" then
-                    local ok, err = lfs.mkdir(dir)
-                    if not ok then
-                        abs_logger.warn("Cannot create cache dir " .. dir .. ": " .. tostring(err))
-                        return false, {type = "io", message = "Cannot create cache directory"}
-                    end
-                end
-            end
+    if has_fs_helpers and cache_dir then
+        local mkdir_ok, mkdir_err = fs_helpers.mkdir_p(cache_dir)
+        if not mkdir_ok then
+            return false, mkdir_err
         end
+    elseif not cache_dir then
+        return false, { type = "io", message = "Cache directory not initialized" }
     end
 
     -- Fetch from API

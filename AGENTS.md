@@ -52,7 +52,8 @@ They capture what was done, decisions & rationale, gotchas & fixes, and next ste
 | 2026-06-10 | generic | [dashboard-downloaded-books-tappable-detail-nav_log.md](docs/devlog/20260610-dashboard-downloaded-books-tappable-detail-nav_log.md) | Made downloaded books in dashboard tappable; added `_onBookTap` → nav.push('detail'); 2 new tests; 311 total pass |
 
 <!-- write-log: session-log-index -->
-| 2026-06-11 | issue | [issue26-remove-dead-download-delete-code-library-browser_log.md](docs/devlog/20260611-issue26-remove-dead-download-delete-code-library-browser_log.md) | Removed 406 lines dead download/delete code from library_browser; 4 new negative tests; 330 total pass |
+| 2026-06-11 | issue | [issue23-extract-shared-fs-helpers-module_log.md](docs/devlog/20260611-issue23-extract-shared-fs-helpers-module_log.md) | Created fs_helpers.lua with mkdir_p/get_file_size/delete_file/delete_dir; replaced inline mkdir in cover_cache+book_detail; 12 new tests; 341 total pass |
+| 2026-06-11 | issue | [issue26-remove-dead-download-delete-code-library-browser_log.md](docs/devlog/20260611-issue26-remove-dead-download-delete-code-library_browser_log.md) | Removed 406 lines dead download/delete code from library_browser; 4 new negative tests; 330 total pass |
 
 | 2026-06-10 | issue | [fix-book-detail-resume-progress-zero_log.md](docs/devlog/20260610-fix-book-detail-resume-progress-zero_log.md) | Fixed book detail resume progress always showing 0%; ported `get_existing_bytes()` + `bytes_downloaded=already_on_disk` + free-space fix from library_browser; 2 new tests; 365 total pass |
 | 2026-06-10 | issue | [fix-ebook-audio-download-status-independent_log.md](docs/devlog/20260610-fix-ebook-audio-download-status-independent_log.md) | Fixed ebook download overwriting audio manifest; per-type status tracking in book detail; fixed reconcile_manifest `fs:` crash; 306 tests pass |
