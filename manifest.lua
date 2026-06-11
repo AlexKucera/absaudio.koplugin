@@ -198,77 +198,82 @@ function manifest._resetSettings()
     settings = nil
 end
 
+--- Filter files for a book entry by a predicate function.
+-- @param abs_item_id string
+-- @param predicate function(file) -> boolean
+-- @return table  array of matching file entries
+function manifest._filter_files(abs_item_id, predicate)
+    local entry = manifest.getBook(abs_item_id)
+    if not entry or not entry.files then return {} end
+    local result = {}
+    for _, file in ipairs(entry.files) do
+        if predicate(file) then
+            table.insert(result, file)
+        end
+    end
+    return result
+end
+--- Reduce files for a book entry with an accumulator function.
+-- @param abs_item_id string
+-- @param reducer function(accum, file) -> new_accum
+-- @param init any  initial accumulator value
+-- @return any  final accumulated value
+function manifest._reduce_files(abs_item_id, reducer, init)
+    local entry = manifest.getBook(abs_item_id)
+    if not entry or not entry.files then return init end
+    local accum = init
+    for _, file in ipairs(entry.files) do
+        accum = reducer(accum, file)
+    end
+    return accum
+end
 --- Check if a book is fully downloaded (all files complete)
 -- @param abs_item_id string
 -- @return boolean
 function manifest.isDownloaded(abs_item_id)
-    local entry = manifest.getBook(abs_item_id)
-    if not entry or not entry.files or #entry.files == 0 then
-        return false
-    end
-    for _, file in ipairs(entry.files) do
-        if file.status ~= "complete" then
-            return false
-        end
-    end
-    return true
+    if not manifest.getBook(abs_item_id) then return false end
+    return #manifest._filter_files(abs_item_id, function(f)
+        return f.status ~= "complete"
+    end) == 0
 end
 
 --- Check if a book has any incomplete files (pending or partial)
 -- @param abs_item_id string
 -- @return boolean
 function manifest.hasIncompleteFiles(abs_item_id)
-    local entry = manifest.getBook(abs_item_id)
-    if not entry or not entry.files then return false end
-    for _, file in ipairs(entry.files) do
-        if file.status == "pending" or file.status == "partial" then
-            return true
-        end
-    end
-    return false
+    return #manifest._filter_files(abs_item_id, function(f)
+        return f.status == "pending" or f.status == "partial"
+    end) > 0
 end
 
 --- Get only the incomplete files for a book
 -- @param abs_item_id string
 -- @return table  array of file entries with pending/partial status
 function manifest.getIncompleteFiles(abs_item_id)
-    local entry = manifest.getBook(abs_item_id)
-    if not entry or not entry.files then return {} end
-    local result = {}
-    for _, file in ipairs(entry.files) do
-        if file.status == "pending" or file.status == "partial" then
-            table.insert(result, file)
-        end
-    end
-    return result
+    return manifest._filter_files(abs_item_id, function(f)
+        return f.status == "pending" or f.status == "partial"
+    end)
 end
 
 --- Get total size of all files for a book
 -- @param abs_item_id string
 -- @return number  total bytes
 function manifest.getTotalFileSize(abs_item_id)
-    local entry = manifest.getBook(abs_item_id)
-    if not entry or not entry.files then return 0 end
-    local total = 0
-    for _, file in ipairs(entry.files) do
-        total = total + (file.size or 0)
-    end
-    return total
+    return manifest._reduce_files(abs_item_id, function(acc, f)
+        return acc + (f.size or 0)
+    end, 0)
 end
 
 --- Get total size of completed files for a book
 -- @param abs_item_id string
 -- @return number  bytes already downloaded
 function manifest.getDownloadedSize(abs_item_id)
-    local entry = manifest.getBook(abs_item_id)
-    if not entry or not entry.files then return 0 end
-    local total = 0
-    for _, file in ipairs(entry.files) do
-        if file.status == "complete" then
-            total = total + (file.size or 0)
+    return manifest._reduce_files(abs_item_id, function(acc, f)
+        if f.status == "complete" then
+            return acc + (f.size or 0)
         end
-    end
-    return total
+        return acc
+    end, 0)
 end
 
 return manifest
