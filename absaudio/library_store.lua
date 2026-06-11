@@ -10,6 +10,8 @@
 --   library_store.getCurrentSort()          -- current sort key
 --   library_store.setSort(key)              -- set sort mode
 --   library_store.isLoaded()               -- true when items have been fetched
+-- Return convention: structured table for getItems (paginated result);
+--   (boolean, count) for fetchAll; direct value for accessors.
 
 local abs_logger = require("abs_logger")
 local has_api, api = pcall(require, "api")

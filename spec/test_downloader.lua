@@ -6,6 +6,54 @@
 package.path = "./?.lua;./?/init.lua;" .. package.path
 
 -- Stub KOReader dependencies
+local Blitbuffer = {
+    COLOR_WHITE = { 1 },
+    COLOR_BLACK = { 2 },
+    COLOR_DARK_GRAY = { 3 },
+    COLOR_LIGHT_GRAY = { 4 },
+    COLOR_BLUE = { 5 },
+    COLOR_GRAY = { 6 },
+    COLOR_DARK_GREEN = { 7 },
+}
+package.loaded["ffi/blitbuffer"] = Blitbuffer
+package.loaded["ui/bidi"] = {}
+package.loaded["device"] = {
+    screen = {
+        getSize = function() return { w = 600, h = 800 } end,
+        scaleBySize = function(n) return n end,
+    },
+    hasKeys = function() return false end,
+    isTouchDevice = function() return false end,
+    input = { group = { Back = "Back" } },
+}
+package.loaded["ui/font"] = {
+    getFace = function(_, size) return { size = size } end,
+}
+package.loaded["ui/geometry"] = {
+    new = function(x, y, w, h) return { x = x, y = y, w = w, h = h } end,
+}
+package.loaded["ui/gesturerange"] = {
+    new = function() end,
+}
+package.loaded["ui/widget/container/inputcontainer"] = {
+    new = function(cls, opts)
+        local o = opts or {}
+        setmetatable(o, { __index = cls })
+        return o
+    end,
+}
+package.loaded["ui/widget/linewidget"] = {
+    new = function() return {} end,
+}
+package.loaded["ui/size"] = {
+    padding = { small = 5, default = 10, large = 15 },
+}
+package.loaded["ui/widget/textwidget"] = {
+    new = function() return {} end,
+}
+package.loaded["ui/widget/verticalspan"] = {
+    new = function() return {} end,
+}
 package.loaded["logger"] = {
     dbg = function() end,
     info = function() end,
@@ -333,48 +381,6 @@ run_test("prepare_download sanitizes directory name", function()
     mock.assert_equals(added_entry.local_dir, "/tmp/audiobooks/An Author_Book_ Subtitle")
 end)
 
--- ============================================================
--- Slice 7: build_range_header (resume partial downloads)
--- ============================================================
-
-run_test("build_range_header returns nil for pending file (no resume)", function()
-    local file = { filename = "book.m4b", size = 10000, status = "pending" }
-    local header = downloader.build_range_header(file, 0)
-    mock.assert_equals(header, nil, "pending → no Range header")
-end)
-
-run_test("build_range_header returns Range for partial file with local size", function()
-    local file = { filename = "book.m4b", size = 10000, status = "partial" }
-    local header = downloader.build_range_header(file, 5000)
-    mock.assert_equals(header, "bytes=5000-", "partial → Range from 5000")
-end)
-
-run_test("build_range_header returns nil when local size equals expected size", function()
-    local file = { filename = "book.m4b", size = 10000, status = "partial" }
-    local header = downloader.build_range_header(file, 10000)
-    mock.assert_equals(header, nil, "same size → no resume needed")
-end)
-
-run_test("build_range_header returns nil when local size exceeds expected", function()
-    local file = { filename = "book.m4b", size = 10000, status = "partial" }
-    local header = downloader.build_range_header(file, 15000)
-    mock.assert_equals(header, nil, "oversize → no resume")
-end)
-
-run_test("build_download_request constructs request for pending file", function()
-    local file = { filename = "book.m4b", ino = "12345", size = 10000, status = "pending" }
-    local req = downloader.build_download_request("li_test", file, "/tmp/out", "mytoken", 0)
-    mock.assert_equals(req.url, "http://server/api/items/li_test/file/12345?token=mytoken")
-    mock.assert_equals(req.method, "GET")
-    assert(req.sink ~= nil, "should have a sink")
-    assert(req.headers["Range"] == nil, "no Range for pending")
-end)
-
-run_test("build_download_request adds Range header for partial file", function()
-    local file = { filename = "book.m4b", ino = "12345", size = 10000, status = "partial" }
-    local req = downloader.build_download_request("li_test", file, "/tmp/out", "mytoken", 5000)
-    mock.assert_equals(req.headers["Range"], "bytes=5000-", "Range header present")
-end)
 
 -- ============================================================
 -- Slice 8: Download state & cancel mechanism
@@ -1143,15 +1149,169 @@ run_test("execute_single_file_download returns error on file open failure", func
 end)
 
 -- ============================================================
--- Slice 15: get_free_space and format_bytes
+-- Slice 15: _download_one_file shared helper
+-- Extracted from execute_download / execute_single_file_download
 -- ============================================================
 
-run_test("format_bytes formats bytes correctly", function()
-    mock.assert_equals(downloader.format_bytes(500), "500 B")
-    mock.assert_equals(downloader.format_bytes(1024), "1.0 KB")
-    mock.assert_equals(downloader.format_bytes(1048576), "1.0 MB")
-    mock.assert_equals(downloader.format_bytes(1073741824), "1.0 GB")
+run_test("_download_one_file downloads a single pending file", function()
+    local written = {}
+    local mock_fs = {
+        mkdir = function() end,
+        open = function(path, mode)
+            return {
+                write = function(self, chunk) table.insert(written, chunk) end,
+                close = function(self) end,
+            }
+        end,
+        get_file_size = function() return nil end,
+    }
+    local downloaded = {}
+    local mock_api = {
+        downloadFile = function(item_id, ino, sink, headers)
+            table.insert(downloaded, { item_id = item_id, ino = ino, headers = headers })
+            sink("hello")
+            sink("world")
+            return true, 200
+        end,
+    }
+    local status_updates = {}
+    local mock_manifest = {
+        updateFileStatus = function(id, fn, status)
+            table.insert(status_updates, { id = id, fn = fn, status = status })
+        end,
+    }
+    local state = downloader.create_download_state()
+
+    local entry = { abs_item_id = "li_1", local_dir = "/tmp/test" }
+    local file = { filename = "book.m4b", ino = "111", size = 10, status = "pending" }
+
+    local ok, reason = downloader._download_one_file(entry, file, {
+        manifest = mock_manifest, api = mock_api, fs = mock_fs, state = state,
+    })
+
+    mock.assert_equals(ok, true, "should succeed")
+    mock.assert_equals(#written, 2, "should write 2 chunks")
+    mock.assert_equals(#status_updates, 1, "should update status once")
+    mock.assert_equals(status_updates[1].status, "complete", "should mark complete")
+    mock.assert_equals(downloaded[1].headers, nil, "no Range header for pending")
 end)
+
+run_test("_download_one_file resumes partial with Range header", function()
+    local mock_fs = {
+        mkdir = function() end,
+        open = function(path, mode)
+            return { write = function() end, close = function() end }
+        end,
+        get_file_size = function() return 500 end,
+    }
+    local downloaded = {}
+    local mock_api = {
+        downloadFile = function(item_id, ino, sink, headers)
+            table.insert(downloaded, { headers = headers })
+            sink("more_data")
+            return true, 200
+        end,
+    }
+    local mock_manifest = { updateFileStatus = function() end }
+    local state = downloader.create_download_state()
+
+    local entry = { abs_item_id = "li_1", local_dir = "/tmp/test" }
+    local file = { filename = "book.m4b", ino = "111", size = 1000, status = "partial" }
+
+    local ok = downloader._download_one_file(entry, file, {
+        manifest = mock_manifest, api = mock_api, fs = mock_fs, state = state,
+    })
+
+    mock.assert_equals(ok, true, "should succeed")
+    mock.assert_equals(downloaded[1].headers["Range"], "bytes=500-", "Range header set")
+end)
+
+run_test("_download_one_file returns error on file open failure", function()
+    local mock_fs = {
+        mkdir = function() end,
+        open = function() return nil end,
+        get_file_size = function() return nil end,
+    }
+    local mock_manifest = { updateFileStatus = function() end }
+    local state = downloader.create_download_state()
+
+    local entry = { abs_item_id = "li_1", local_dir = "/tmp/test" }
+    local file = { filename = "book.m4b", ino = "111", size = 10, status = "pending" }
+
+    local ok, reason = downloader._download_one_file(entry, file, {
+        manifest = mock_manifest, api = {}, fs = mock_fs, state = state,
+    })
+
+    mock.assert_equals(ok, false, "should fail")
+    mock.assert_equals(reason, "file_open_error", "reason should be file_open_error")
+end)
+
+run_test("_download_one_file returns error on API failure", function()
+    local mock_fs = {
+        mkdir = function() end,
+        open = function(path, mode)
+            return { write = function() end, close = function() end }
+        end,
+        get_file_size = function() return nil end,
+    }
+    local mock_api = {
+        downloadFile = function(item_id, ino, sink, headers)
+            return false, 500
+        end,
+    }
+    local status_updates = {}
+    local mock_manifest = {
+        updateFileStatus = function(id, fn, status)
+            table.insert(status_updates, { status = status })
+        end,
+    }
+    local state = downloader.create_download_state()
+
+    local entry = { abs_item_id = "li_1", local_dir = "/tmp/test" }
+    local file = { filename = "book.m4b", ino = "111", size = 10, status = "pending" }
+
+    local ok, reason = downloader._download_one_file(entry, file, {
+        manifest = mock_manifest, api = mock_api, fs = mock_fs, state = state,
+    })
+
+    mock.assert_equals(ok, false, "should fail on API error")
+    mock.assert_equals(reason, "download_failed", "reason should be download_failed")
+    mock.assert_equals(status_updates[1].status, "partial", "should mark partial on failure")
+end)
+
+run_test("_download_one_file updates bytes_downloaded in state", function()
+    local state = downloader.create_download_state()
+    local mock_fs = {
+        mkdir = function() end,
+        open = function(path, mode)
+            return { write = function() end, close = function() end }
+        end,
+        get_file_size = function() return nil end,
+    }
+    local mock_api = {
+        downloadFile = function(item_id, ino, sink, headers)
+            sink(string.rep("x", 1000))  -- 1 KB chunk
+            sink(string.rep("y", 500))   -- 500 B chunk
+            return true, 200
+        end,
+    }
+    local mock_manifest = { updateFileStatus = function() end }
+
+    local entry = { abs_item_id = "li_1", local_dir = "/tmp/test" }
+    local file = { filename = "book.m4b", ino = "111", size = 2000, status = "pending" }
+
+    downloader._download_one_file(entry, file, {
+        manifest = mock_manifest, api = mock_api, fs = mock_fs, state = state,
+    })
+
+    mock.assert_equals(state.bytes_downloaded, 1500,
+        "bytes_downloaded should reflect total bytes written (1000+500)")
+end)
+
+-- ============================================================
+-- Slice 15b: get_free_space
+-- (format_bytes moved to widget_helpers — see test_widget_helpers)
+-- ============================================================
 
 run_test("get_free_space returns number when df works", function()
     -- This test may fail in some environments, so we just check it returns nil or a number

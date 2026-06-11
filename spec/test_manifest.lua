@@ -23,10 +23,12 @@ package.loaded["datastorage"] = {
 }
 
 -- Stub logger (manifest.lua will use abs_logger which requires "logger")
+-- Use a recording stub so we can assert on warn() calls
+local recorded_warnings = {}
 package.loaded["logger"] = {
     dbg = function() end,
     info = function() end,
-    warn = function() end,
+    warn = function(msg) table.insert(recorded_warnings, msg) end,
 }
 
 local mock = require("spec/test_helper")
@@ -577,6 +579,127 @@ run_test("_resetSettings allows init to re-run", function()
     assert(book == nil, "getBook should return nil after reset with fresh settings")
 end)
 
+-- ============================================================
+-- Slice 5: Manifest mutation functions warn on miss (Issue #27)
+-- ============================================================
+
+run_test("updateBook warns when given nonexistent ID", function()
+    -- Clear recorded warnings before test
+    while #recorded_warnings > 0 do table.remove(recorded_warnings) end
+
+    mock_settings = mock.create_lua_settings({})
+    manifest._resetSettings()
+    manifest.init()
+
+    -- Do NOT add any book — call updateBook with a nonexistent ID
+    local result = manifest.updateBook("nonexistent", {title = "Updated"})
+
+    -- Should have emitted exactly one warning
+    mock.assert_equals(#recorded_warnings, 1,
+        "updateBook should emit one warning for nonexistent ID")
+    mock.assert_equals(string.find(recorded_warnings[1], "nonexistent") ~= nil, true,
+        "warning should mention the ID that was not found")
+end)
+
+run_test("updateBook warns when given nil ID", function()
+    while #recorded_warnings > 0 do table.remove(recorded_warnings) end
+
+    mock_settings = mock.create_lua_settings({})
+    manifest._resetSettings()
+    manifest.init()
+
+    local result = manifest.updateBook(nil, {title = "Updated"})
+
+    mock.assert_equals(#recorded_warnings, 1,
+        "updateBook should emit one warning for nil ID")
+end)
+
+run_test("updateFileStatus warns when book not found", function()
+    while #recorded_warnings > 0 do table.remove(recorded_warnings) end
+
+    mock_settings = mock.create_lua_settings({})
+    manifest._resetSettings()
+    manifest.init()
+
+    local result = manifest.updateFileStatus("nonexistent", "part1.m4b", "complete")
+
+    mock.assert_equals(#recorded_warnings, 1,
+        "updateFileStatus should emit one warning for nonexistent book ID")
+end)
+
+run_test("updateFileStatus warns when file not found in book", function()
+    while #recorded_warnings > 0 do table.remove(recorded_warnings) end
+
+    mock_settings = mock.create_lua_settings({})
+    manifest._resetSettings()
+    manifest.init()
+
+    manifest.addBook({
+        abs_item_id = "li_abc123",
+        title = "Test Book",
+        author = "Author",
+        local_dir = "/tmp/test",
+        files = {
+            {filename = "part1.m4b", size = 1000, type = "audio", status = "pending"},
+        },
+        current_time = 0,
+        duration = 3600,
+        chapters = {},
+        is_finished = false,
+        last_synced_at = 0,
+    })
+
+    -- Update a filename that doesn't exist in this book
+    local result = manifest.updateFileStatus("li_abc123", "missing.m4b", "complete")
+
+    mock.assert_equals(#recorded_warnings, 1,
+        "updateFileStatus should emit one warning for nonexistent filename")
+end)
+
+run_test("updatePosition warns when book not found", function()
+    while #recorded_warnings > 0 do table.remove(recorded_warnings) end
+
+    mock_settings = mock.create_lua_settings({})
+    manifest._resetSettings()
+    manifest.init()
+
+    local result = manifest.updatePosition("nonexistent", 100, false)
+
+    mock.assert_equals(#recorded_warnings, 1,
+        "updatePosition should emit one warning for nonexistent ID")
+end)
+
+run_test("mutation functions do NOT warn for valid IDs", function()
+    while #recorded_warnings > 0 do table.remove(recorded_warnings) end
+
+    mock_settings = mock.create_lua_settings({})
+    manifest._resetSettings()
+    manifest.init()
+
+    manifest.addBook({
+        abs_item_id = "li_valid",
+        title = "Valid Book",
+        author = "Author",
+        local_dir = "/tmp/test",
+        files = {
+            {filename = "part1.m4b", size = 1000, type = "audio", status = "pending"},
+        },
+        current_time = 0,
+        duration = 3600,
+        chapters = {},
+        is_finished = false,
+        last_synced_at = 0,
+    })
+
+    -- All valid operations — should produce zero warnings
+    manifest.updateBook("li_valid", {title = "Updated"})
+    manifest.updateFileStatus("li_valid", "part1.m4b", "complete")
+    manifest.updatePosition("li_valid", 100, false)
+
+    mock.assert_equals(#recorded_warnings, 0,
+        "no warnings should be emitted for valid operations")
+end)
+
 run_test("flush() is called by addBook (mock verify)", function()
     local flush_count = 0
     mock_settings = mock.create_lua_settings({})
@@ -599,6 +722,231 @@ run_test("flush() is called by addBook (mock verify)", function()
     })
 
     mock.assert_equals(flush_count, 1, "addBook should call flush once")
+end)
+
+-- ============================================================
+-- Slice 6: Higher-order file-iteration helpers (Issue #29)
+-- ============================================================
+
+run_test("_filter_files returns files matching predicate", function()
+    mock_settings = mock.create_lua_settings({})
+    manifest._resetSettings()
+    manifest.init()
+
+    manifest.addBook({
+        abs_item_id = "li_filter_test",
+        title = "Filter Test",
+        author = "A",
+        local_dir = "/tmp/filter",
+        files = {
+            {filename = "a.m4b", size = 100, type = "audio", status = "complete"},
+            {filename = "b.m4b", size = 200, type = "audio", status = "pending"},
+            {filename = "c.m4b", size = 300, type = "audio", status = "partial"},
+        },
+        current_time = 0,
+        duration = 0,
+        chapters = {},
+        is_finished = false,
+        last_synced_at = 0,
+    })
+
+    local complete = manifest._filter_files("li_filter_test", function(f)
+        return f.status == "complete"
+    end)
+    mock.assert_equals(#complete, 1, "one complete file")
+    mock.assert_equals(complete[1].filename, "a.m4b", "should be the complete file")
+end)
+
+run_test("_filter_files returns empty array for no matches", function()
+    mock_settings = mock.create_lua_settings({})
+    manifest._resetSettings()
+    manifest.init()
+
+    manifest.addBook({
+        abs_item_id = "li_nomatch",
+        title = "No Match",
+        author = "A",
+        local_dir = "/tmp/nomatch",
+        files = {
+            {filename = "a.m4b", size = 100, type = "audio", status = "pending"},
+        },
+        current_time = 0,
+        duration = 0,
+        chapters = {},
+        is_finished = false,
+        last_synced_at = 0,
+    })
+
+    local result = manifest._filter_files("li_nomatch", function(f)
+        return f.status == "complete"
+    end)
+    mock.assert_equals(#result, 0, "no matching files")
+end)
+
+-- ============================================================
+-- Slice 6b: _reduce_files helper (Issue #29)
+-- ============================================================
+
+run_test("_reduce_files sums file sizes with reducer", function()
+    mock_settings = mock.create_lua_settings({})
+    manifest._resetSettings()
+    manifest.init()
+
+    manifest.addBook({
+        abs_item_id = "li_reduce_test",
+        title = "Reduce Test",
+        author = "A",
+        local_dir = "/tmp/reduce",
+        files = {
+            {filename = "a.m4b", size = 100, type = "audio", status = "complete"},
+            {filename = "b.m4b", size = 200, type = "audio", status = "pending"},
+            {filename = "c.m4b", size = 300, type = "audio", status = "partial"},
+        },
+        current_time = 0,
+        duration = 0,
+        chapters = {},
+        is_finished = false,
+        last_synced_at = 0,
+    })
+
+    local total = manifest._reduce_files("li_reduce_test", function(acc, f)
+        return acc + f.size
+    end, 0)
+    mock.assert_equals(total, 600, "sum of all file sizes")
+end)
+
+run_test("_reduce_files returns init for nonexistent entry", function()
+    mock_settings = mock.create_lua_settings({})
+    manifest._resetSettings()
+    manifest.init()
+
+    local total = manifest._reduce_files("nonexistent", function(acc, f)
+        return acc + f.size
+    end, 42)
+    mock.assert_equals(total, 42, "returns init value for missing entry")
+end)
+
+-- ============================================================
+-- Slice 6c: Edge cases for _filter_files and _reduce_files (Issue #29)
+-- ============================================================
+
+run_test("_filter_files returns empty for nil entry", function()
+    mock_settings = mock.create_lua_settings({})
+    manifest._resetSettings()
+    manifest.init()
+    -- Don't add any book — entry is nil
+    local result = manifest._filter_files("no_such_book", function(f)
+        return true
+    end)
+    mock.assert_equals(#result, 0, "empty array for nil entry")
+end)
+
+run_test("_filter_files returns empty for empty files array", function()
+    mock_settings = mock.create_lua_settings({})
+    manifest._resetSettings()
+    manifest.init()
+    manifest.addBook({
+        abs_item_id = "li_empty_files",
+        title = "Empty Files",
+        author = "A",
+        local_dir = "/tmp/empty",
+        files = {},
+        current_time = 0,
+        duration = 0,
+        chapters = {},
+        is_finished = false,
+        last_synced_at = 0,
+    })
+    local result = manifest._filter_files("li_empty_files", function(f)
+        return true
+    end)
+    mock.assert_equals(#result, 0, "empty array for no files")
+end)
+
+run_test("_filter_files handles missing status field gracefully", function()
+    mock_settings = mock.create_lua_settings({})
+    manifest._resetSettings()
+    manifest.init()
+    manifest.addBook({
+        abs_item_id = "li_no_status",
+        title = "No Status",
+        author = "A",
+        local_dir = "/tmp/nostatus",
+        files = {
+            {filename = "a.m4b", size = 100, type = "audio"},
+            {filename = "b.m4b", size = 200, type = "audio", status = "complete"},
+        },
+        current_time = 0,
+        duration = 0,
+        chapters = {},
+        is_finished = false,
+        last_synced_at = 0,
+    })
+    -- Predicate checks for complete — only b.m4b matches
+    local result = manifest._filter_files("li_no_status", function(f)
+        return f.status == "complete"
+    end)
+    mock.assert_equals(#result, 1, "one file with status=complete")
+    mock.assert_equals(result[1].filename, "b.m4b", "should be the one with status set")
+end)
+
+run_test("_reduce_files returns init for nil entry", function()
+    mock_settings = mock.create_lua_settings({})
+    manifest._resetSettings()
+    manifest.init()
+    local total = manifest._reduce_files("ghost", function(acc, f)
+        return acc + 1
+    end, 99)
+    mock.assert_equals(total, 99, "init value for nil entry")
+end)
+
+run_test("_reduce_files returns init for empty files array", function()
+    mock_settings = mock.create_lua_settings({})
+    manifest._resetSettings()
+    manifest.init()
+    manifest.addBook({
+        abs_item_id = "li_reduce_empty",
+        title = "Reduce Empty",
+        author = "A",
+        local_dir = "/tmp/redempty",
+        files = {},
+        current_time = 0,
+        duration = 0,
+        chapters = {},
+        is_finished = false,
+        last_synced_at = 0,
+    })
+    local total = manifest._reduce_files("li_reduce_empty", function(acc, f)
+        return acc + (f.size or 0)
+    end, 0)
+    mock.assert_equals(total, 0, "init value for empty files")
+end)
+
+run_test("_reduce_files handles mixed statuses and nil sizes", function()
+    mock_settings = mock.create_lua_settings({})
+    manifest._resetSettings()
+    manifest.init()
+    manifest.addBook({
+        abs_item_id = "li_mixed_edge",
+        title = "Mixed Edge",
+        author = "A",
+        local_dir = "/tmp/mixededge",
+        files = {
+            {filename = "a.m4b", type = "audio", status = "complete"},  -- size=nil
+            {filename = "b.m4b", size = 250, type = "audio", status = "partial"},
+            {filename = "c.epub", size = 500, type = "ebook"},  -- status=nil
+        },
+        current_time = 0,
+        duration = 0,
+        chapters = {},
+        is_finished = false,
+        last_synced_at = 0,
+    })
+    -- Sum all sizes (including nil-size treated as 0)
+    local total = manifest._reduce_files("li_mixed_edge", function(acc, f)
+        return acc + (f.size or 0)
+    end, 0)
+    mock.assert_equals(total, 750, "sum with nil sizes treated as 0")
 end)
 
 -- ============================================================

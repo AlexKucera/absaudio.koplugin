@@ -7,6 +7,7 @@
 --   nav.pop()                    — pop the stack: close current widget, re-show previous
 --   nav.reset(name, data)        — clear the stack and show a screen (for initial load)
 --   nav._reset()                 — clear all state (for testing)
+-- Return convention: void for push/pop/reset; boolean for async show_fn (true=async).
 
 local nav = {}
 

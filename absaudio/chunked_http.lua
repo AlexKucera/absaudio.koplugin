@@ -9,6 +9,7 @@
 -- Public API:
 --   chunked_http.download(url, headers, on_chunk, chunk_size)
 --     -> true, status_code | false, error_string
+-- Return convention: (boolean, status_code|error_string) — ok-pattern for HTTP results.
 --
 -- Dependencies (injected via module.init or defaults):
 --   socket, ssl, url_parser, logger

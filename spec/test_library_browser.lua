@@ -639,57 +639,117 @@ run_test("show() returns _view for navigator tracking (source check)", function(
 end)
 
 -- ============================================================
--- Gap tests: ebook download, re-download prompt, delete confirm
+-- Test: onBookTap pushes detail without callbacks (self-contained)
 -- ============================================================
-
-run_test("onBookTap passes ebook_only flag through on_download", function()
-    local captured = nil
-    local data = { on_download = function(d) captured = d end }
-    browser.show(data)
-    local item = { id = "li_1", title = "Test Book", media = { metadata = {} } }
-    -- Simulate onBookTap with data containing ebook_only
-    local tap_data = { item = item, ebook_only = true }
-    data.on_download(tap_data)
-    mock.assert_equals(captured.ebook_only, true, "should pass ebook_only flag")
-    mock.assert_equals(captured.item.id, "li_1", "should pass item")
-end)
-
--- ============================================================
--- Regression: re-push detail callbacks must unwrap {item, ebook_only}
--- ============================================================
-run_test("re-push detail on_download callback unwraps ebook format", function()
-    -- Verify ALL nav.push("detail" ...) calls in library_browser.lua
-    -- pass on_download callbacks that correctly unwrap {item=..., ebook_only=true}
-    -- This prevents the crash when: ebook download → cancel → tap download again
+-- After Issue #26 dead code removal, library_browser's onBookTap
+-- only passes { item = item } — no on_download/on_delete/on_open_ebook
+-- callbacks. BookDetailView owns its complete lifecycle.
+run_test("onBookTap pushes detail without download/delete callbacks", function()
+    -- Source-level check: verify onBookTap nav.push does not include callbacks
     local source_file = io.open("absaudio/library_browser.lua", "r")
     local source = source_file:read("*a")
     source_file:close()
 
-    -- Find all nav.push("detail" blocks and check their on_download callbacks
-    local bad_callbacks = 0
-    local good_callbacks = 0
+    -- Extract the onBookTap function body
+    local onbooktap_body = source:match("function LibraryBrowserView:onBookTap(.-)end")
+    mock.assert_equals(onbooktap_body ~= nil, true, "onBookTap should exist")
 
-    -- Pattern: look for 'function(b) ... _onDownloadBook(b) end' which is the BUG pattern
-    -- The fix uses: function(data) local book_item = data.item or data ... end
-    for m in source:gmatch("on_download%s*=%s*function%(%s*b%s*%)%s*self_ref?:_onDownloadBook%(%s*b%s*%)%s*end") do
-        bad_callbacks = bad_callbacks + 1
+    if onbooktap_body then
+        -- Should NOT contain callback key assignments
+        local has_on_download = onbooktap_body:match("on_download%s*=") ~= nil
+        local has_on_delete = onbooktap_body:match("on_delete%s*=") ~= nil
+        local has_on_open_ebook = onbooktap_body:match("on_open_ebook%s*=") ~= nil
+
+        mock.assert_equals(has_on_download, false,
+            "onBookTap should not assign on_download callback")
+        mock.assert_equals(has_on_delete, false,
+            "onBookTap should not assign on_delete callback")
+        mock.assert_equals(has_on_open_ebook, false,
+            "onBookTap should not assign on_open_ebook callback")
+
+        -- Should still push with item
+        local has_item = onbooktap_body:match("item%s*=%s*item") ~= nil
+        mock.assert_equals(has_item, true,
+            "onBookTap should still pass item to detail")
     end
+end)
 
-    -- Count the correct unwrapping callbacks
-    for m in source:gmatch("local book_item = data%.item or data") do
-        good_callbacks = good_callbacks + 1
-    end
+-- ============================================================
+-- Test: No callback closures in library_browser source
+-- ============================================================
+-- After Issue #26 removal, there should be zero on_download/on_delete/
+-- on_open_ebook callback closures in library_browser.lua. All that logic
+-- lives in book_detail.lua now.
+run_test("library_browser has no download/delete callback closures", function()
+    local source_file = io.open("absaudio/library_browser.lua", "r")
+    local source = source_file:read("*a")
+    source_file:close()
 
-    -- The initial onBookTap at line ~593 also has an unwrapping callback
-    -- So we expect at least 3 unwrapping callbacks (initial + cancel + completion + delete-repush)
-    mock.assert_equals(bad_callbacks, 0,
-        "no on_download callbacks should pass raw 'b' to _onDownloadBook")
-    mock.assert_equals(good_callbacks >= 3, true,
-        "all re-push sites should use unwrapping callback (found " .. good_callbacks .. ")")
+    -- Should have NO callback assignments for these keys in nav.push calls
+    local has_on_download_callback = source:match("on_download%s*=%s*function") ~= nil
+    local has_on_delete_callback = source:match("on_delete%s*=%s*function") ~= nil
+    local has_on_open_ebook_callback = source:match("on_open_ebook%s*=%s*function") ~= nil
+
+    mock.assert_equals(has_on_download_callback, false,
+        "library_browser should not have on_download callback closures")
+    mock.assert_equals(has_on_delete_callback, false,
+        "library_browser should not have on_delete callback closures")
+    mock.assert_equals(has_on_open_ebook_callback, false,
+        "library_browser should not have on_open_ebook callback closures")
 end)
 
 -- ============================================================
 -- Summary
+-- ============================================================
+-- Test: LibraryBrowserView does NOT have download/delete handlers
+-- ============================================================
+-- After PR #22, BookDetailView owns its complete download/delete/ebook
+-- lifecycle as self-contained instance methods. Library browser should NOT
+-- duplicate these handlers — they are dead code carried over from before
+-- the self-contained refactor.
+run_test("LibraryBrowserView does NOT have download/delete handlers (owned by book_detail)", function()
+    -- Source-level check: these method definitions should not exist in library_browser.lua
+    local source_file = io.open("absaudio/library_browser.lua", "r")
+    local source = source_file:read("*a")
+    source_file:close()
+
+    -- After PR #22 self-contained refactor, these methods live ONLY in book_detail.lua
+    local has_on_download = source:match("function LibraryBrowserView:_onDownloadBook") ~= nil
+    local has_on_delete = source:match("function LibraryBrowserView:_onDeleteBook") ~= nil
+    local has_on_delete_ebook = source:match("function LibraryBrowserView:_onDeleteEbookOnly") ~= nil
+    local has_on_open_ebook = source:match("function LibraryBrowserView:_onOpenEbook") ~= nil
+
+    mock.assert_equals(has_on_download, false,
+        "_onDownloadBook should NOT be defined in library_browser (lives in book_detail)")
+    mock.assert_equals(has_on_delete, false,
+        "_onDeleteBook should NOT be defined in library_browser (lives in book_detail)")
+    mock.assert_equals(has_on_delete_ebook, false,
+        "_onDeleteEbookOnly should NOT be defined in library_browser (lives in book_detail)")
+    mock.assert_equals(has_on_open_ebook, false,
+        "_onOpenEbook should NOT be defined in library_browser (lives in book_detail)")
+end)
+
+-- ============================================================
+-- Test: library_browser does not require downloader or download_progress
+-- ============================================================
+-- The downloader and download_progress modules are only needed by the
+-- download/delete handler methods which live in book_detail now.
+run_test("library_browser does not require downloader or download_progress", function()
+    local source_file = io.open("absaudio/library_browser.lua", "r")
+    local source = source_file:read("*a")
+    source_file:close()
+
+    -- Should NOT have a bare require for downloader (pcall require is ok for optional deps)
+    local has_downloader_require = source:match("local downloader = require%(") ~= nil
+    mock.assert_equals(has_downloader_require, false,
+        "library_browser should not require downloader module directly")
+
+    -- Should NOT have pcall require for download_progress either
+    local has_progress_require = source:match("has_progress.*download_progress") ~= nil
+    mock.assert_equals(has_progress_require, false,
+        "library_browser should not require download_progress module")
+end)
+
 -- ===========================================================
 print(string.format("\n%d passed, %d failed", passed, failed))
 

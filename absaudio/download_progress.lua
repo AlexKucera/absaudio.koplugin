@@ -4,6 +4,7 @@
 -- Public API:
 --   progress.show(data)
 --     data: { state=download_state, on_cancel=function() end }
+-- Return convention: void for show/close; direct value (string) for format_progress_info.
 --   progress.close()
 --   progress.format_progress_info(state)
 
@@ -26,6 +27,7 @@ local Screen = Device.screen
 
 local abs_logger = require("abs_logger")
 
+local widget_helpers = require("absaudio/widget_helpers")
 local progress = {}
 local _widget = nil  -- reference to current widget
 
@@ -45,17 +47,7 @@ function progress.format_progress_info(state)
     local fraction = state:progress_fraction()
     local pct = math.floor(fraction * 100)
 
-    local function format_bytes(b)
-        if b >= 1073741824 then
-            return string.format("%.1f GB", b / 1073741824)
-        elseif b >= 1048576 then
-            return string.format("%.1f MB", b / 1048576)
-        elseif b >= 1024 then
-            return string.format("%.1f KB", b / 1024)
-        else
-            return tostring(b) .. " B"
-        end
-    end
+    local format_bytes = widget_helpers.format_bytes
 
     local lines = {}
     table.insert(lines, string.format(_("Downloading file %d of %d"), current, total))
