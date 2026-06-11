@@ -8,6 +8,7 @@
 --   format_file_size(bytes)   — "50 MB", "1.2 GB", etc.
 --   addSeparator(content_group, content_width)  — insert line + spacer
 --   makeTappableButton(text, on_tap, opts)      — create InputContainer+TextWidget+Tap
+-- Return convention: direct value (string or widget) — pure utility functions, no error wrapping.
 
 local Blitbuffer = require("ffi/blitbuffer")
 local Geom = require("ui/geometry")
@@ -63,6 +64,24 @@ function helpers.format_file_size(bytes)
         return string.format("%.1f %s", size, units[unit_idx])
     end
     return string.format("%d %s", size, units[unit_idx])
+end
+
+------------------------------------------------------------------------
+-- Format bytes as human-readable string: "1.5 GB", "200 MB", etc.
+-- @param b number  bytes
+-- @return string
+------------------------------------------------------------------------
+function helpers.format_bytes(b)
+    if not b or b <= 0 then return "0 B" end
+    if b >= 1073741824 then
+        return string.format("%.1f GB", b / 1073741824)
+    elseif b >= 1048576 then
+        return string.format("%.1f MB", b / 1048576)
+    elseif b >= 1024 then
+        return string.format("%.1f KB", b / 1024)
+    else
+        return tostring(b) .. " B"
+    end
 end
 
 ------------------------------------------------------------------------

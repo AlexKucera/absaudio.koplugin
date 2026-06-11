@@ -939,7 +939,7 @@ function BookDetailView:_onDownloadBook(item, ebook_only)
         if free_bytes and not downloader.check_free_space(needed, free_bytes) then
             UIManager:show(InfoMessage:new{
                 text = string.format(_("Insufficient disk space. Need %s, have %s."),
-                    downloader.format_bytes(needed), downloader.format_bytes(free_bytes)),
+                    widget_helpers.format_bytes(needed), widget_helpers.format_bytes(free_bytes)),
                 timeout = 5,
             })
             return

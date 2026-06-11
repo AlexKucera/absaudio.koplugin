@@ -283,6 +283,38 @@ test("custom width is used for dimen", function()
 end)
 
 ------------------------------------------------------------------------
+-- format_bytes
+------------------------------------------------------------------------
+print("\nformat_bytes:")
+test("returns '0 B' for nil", function()
+    assert_eq(helpers.format_bytes(nil), "0 B")
+end)
+
+test("returns '0 B' for 0", function()
+    assert_eq(helpers.format_bytes(0), "0 B")
+end)
+
+test("returns '0 B' for negative", function()
+    assert_eq(helpers.format_bytes(-1), "0 B")
+end)
+
+test("formats bytes", function()
+    assert_eq(helpers.format_bytes(512), "512 B")
+end)
+
+test("formats kilobytes with one decimal", function()
+    assert_eq(helpers.format_bytes(1536), "1.5 KB")
+end)
+
+test("formats megabytes", function()
+    assert_eq(helpers.format_bytes(1048576), "1.0 MB")
+end)
+
+test("formats gigabytes", function()
+    assert_eq(helpers.format_bytes(1073741824), "1.0 GB")
+end)
+
+------------------------------------------------------------------------
 -- Summary
 ------------------------------------------------------------------------
 print(string.format("\n%d passed, %d failed", passed, failed))
