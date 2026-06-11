@@ -132,6 +132,79 @@ run_test("messages below configured level are suppressed", function()
 end)
 
 -- ============================================================
+-- Test: Fallback when KOReader logger is absent
+-- ============================================================
+run_test("loads successfully when logger module is absent", function()
+    -- Remove logger from package.loaded so require fails
+    package.loaded["logger"] = nil
+    package.loaded["abs_logger"] = nil
+
+    -- This should NOT crash — pcall guard with fallback
+    local ok, log = pcall(require, "abs_logger")
+    assert(ok, "abs_logger should load without crashing: " .. tostring(log))
+    assert(type(log) == "table", "fallback logger should be a table")
+    assert(type(log.info) == "function", "fallback logger should have info method")
+    assert(type(log.warn) == "function", "fallback logger should have warn method")
+    assert(type(log.verbose) == "function", "fallback logger should have verbose method")
+end)
+
+-- Helper for error messages (used in tests below)
+local function concat_table(t)
+    local parts = {}
+    for _, v in ipairs(t) do table.insert(parts, tostring(v)) end
+    return table.concat(parts, ", ")
+end
+
+run_test("fallback logger outputs [ABS] prefixed messages via print", function()
+    -- Capture print output
+    local printed = {}
+    local _print = print
+    print = function(msg) table.insert(printed, msg) end
+
+    package.loaded["logger"] = nil
+    package.loaded["abs_logger"] = nil
+    local log = require("abs_logger")
+
+    log.set_level("verbose")
+    log.info("fallback test message")
+    log.warn("fallback warn message")
+    log.verbose("fallback verbose message")
+
+    -- Restore print
+    print = _print
+
+    -- At least one message should have [ABS] prefix
+    local found_abs = false
+    for _, msg in ipairs(printed) do
+        if string.find(msg, "[ABS]", 1, true) then
+            found_abs = true
+        end
+    end
+    assert(found_abs, "fallback messages should contain [ABS] prefix, got: " .. concat_table(printed))
+end)
+
+run_test("fallback logger respects level filtering", function()
+    local printed = {}
+    local _print = print
+    print = function(msg) table.insert(printed, msg) end
+
+    package.loaded["logger"] = nil
+    package.loaded["abs_logger"] = nil
+    local log = require("abs_logger")
+
+    log.set_level("warn")
+    log.verbose("should not print")
+    log.info("should not print either")
+    log.warn("this should print")
+
+    print = _print
+
+    -- Only 1 message (the warn)
+    assert(#printed == 1, "warn level should produce exactly 1 output, got " .. #printed)
+    assert(string.find(printed[1], "this should print", 1, true), "output should be the warn message")
+end)
+
+-- ============================================================
 -- Summary
 -- ============================================================
 print(string.format("\n%d passed, %d failed", passed, failed))

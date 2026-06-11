@@ -9,7 +9,16 @@
 --   logger.info(msg)           -- log at info level
 --   logger.warn(msg)           -- log at warn level
 
-local koreader_logger = require("logger")
+-- pcall-guard: KOReader's logger may be absent (test env, or future KOReader changes)
+local koreader_ok, koreader_logger = pcall(require, "logger")
+if not koreader_ok then
+    -- Fallback: print-based logger with [ABS] prefix
+    koreader_logger = {
+        dbg = function(msg) print(tostring(msg)) end,
+        info = function(msg) print(tostring(msg)) end,
+        warn = function(msg) print(tostring(msg)) end,
+    }
+end
 
 local logger = {}
 
