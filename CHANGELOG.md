@@ -11,7 +11,7 @@ All notable changes to this project will be documented in this file. The format 
 - **download:** add ebook download button in book detail view with `ebook_only` flag
 - **api:** add `downloadFile` endpoint with Range header support for resuming partial downloads
 - **detail:** add Open Ebook button to open downloaded ebooks in KOReader ReaderUI; fix ebook section rendering when viewing downloaded books offline
-
+- **player:** implement playback engine with seekable progress bar, dynamic time display, stub/inkview backend strategy pattern, and m3u playlist generation; closes #6
 ### fix
 
 - **download-progress:** fix widget init crash when state is nil — `format_progress_info` called `state:progress_fraction()` on bare `{}` from `self.state or {}` fallback; added nil/type guard returning safe default text and removed misleading empty-table fallback

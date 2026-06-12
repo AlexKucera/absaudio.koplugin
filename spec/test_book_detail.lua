@@ -1282,8 +1282,390 @@ run_test("_onDownloadBook does not show 'not available' when modules loaded", fu
     assert(not info_shown, "should NOT show 'download not available' when modules are present")
 end)
 
-print(string.format("\n%d passed, %d failed", passed, failed))
+-- ============================================================
+-- Slice 8: Now-playing UI renders when audio is downloaded
+-- ============================================================
 
+run_test("now-playing: adds controls section when audio is complete", function()
+    -- Set up manifest with a downloaded audiobook
+    local mock_manifest_book = {
+        id = "np_complete",
+        title = "Now Playing Test",
+        author = "Test Author",
+        duration = 3600,
+        local_dir = "/tmp/absaudio_np",
+        current_time = 120,
+        files = {
+            { filename = "track1.m4b", type = "audio", status = "complete" },
+            { filename = "track2.m4b", type = "audio", status = "complete" },
+        },
+        chapters = {},
+    }
+    mock_manifest_books = { ["np_complete"] = mock_manifest_book }
+
+    local item = {
+        id = "np_complete",
+        title = "Now Playing Test",
+        mediaType = "book",
+        media = {
+            duration = 3600,
+            metadata = { title = "Now Playing Test", authorName = "Test Author" },
+            audioFiles = {
+                { filename = "track1.m4b", format = "m4b", duration = 1800 },
+                { filename = "track2.m4b", format = "m4b", duration = 1800 },
+            },
+        },
+    }
+    mock_api_configured = false  -- force manifest path
+
+    local view = detail._renderView(item)
+
+    -- Audio is complete → now-playing section should exist
+    mock.assert_equals(view.audio_download_state, "complete", "audio state detected as complete")
+    mock.assert_equals(view.player ~= nil, true, "player instance created")
+end)
+
+run_test("now-playing: does NOT add controls when audio not downloaded", function()
+    mock_manifest_books = {}
+
+    local item = {
+        id = "np_none",
+        title = "No Download",
+        mediaType = "book",
+        media = {
+            duration = 3600,
+            metadata = { title = "No Download" },
+            audioFiles = {
+                { filename = "track.m4b", format = "m4b", duration = 3600 },
+            },
+        },
+    }
+    mock_api_configured = false
+
+    local view = detail._renderView(item)
+
+    -- No download → no player, no now-playing section
+    mock.assert_equals(view.player == nil, true, "no player when not downloaded")
+    mock.assert_equals(view.audio_download_state, "none", "audio state is none")
+end)
+
+run_test("now-playing: does NOT add controls when audio incomplete", function()
+    local mock_manifest_book = {
+        id = "np_partial",
+        title = "Partial Download",
+        local_dir = "/tmp/absaudio_np_p",
+        files = {
+            { filename = "track1.m4b", type = "audio", status = "partial" },
+        },
+        chapters = {},
+    }
+    mock_manifest_books = { ["np_partial"] = mock_manifest_book }
+
+    local item = {
+        id = "np_partial",
+        title = "Partial Download",
+        mediaType = "book",
+        media = {
+            duration = 3600,
+            metadata = { title = "Partial Download" },
+            audioFiles = {
+                { filename = "track1.m4b", format = "m4b", duration = 3600 },
+            },
+        },
+    }
+    mock_api_configured = false
+
+    local view = detail._renderView(item)
+
+    -- Partial download → no player
+    mock.assert_equals(view.player == nil, true, "no player when partial")
+    mock.assert_equals(view.audio_download_state, "incomplete", "audio state is incomplete")
+end)
+
+run_test("now-playing: player has correct track info from manifest", function()
+    local mock_manifest_book = {
+        id = "np_tracks",
+        title = "Multi Track",
+        author = "Author",
+        duration = 300 + 240 + 280,
+        local_dir = "/tmp/absaudio_np_mt",
+        current_time = 500,
+        files = {
+            { filename = "t1.m4b", type = "audio", status = "complete" },
+            { filename = "t2.m4b", type = "audio", status = "complete" },
+            { filename = "t3.m4b", type = "audio", status = "complete" },
+        },
+        chapters = {},
+    }
+    mock_manifest_books = { ["np_tracks"] = mock_manifest_book }
+
+    local item = {
+        id = "np_tracks",
+        title = "Multi Track",
+        mediaType = "book",
+        media = {
+            duration = 820,
+            metadata = { title = "Multi Track", authorName = "Author" },
+            audioFiles = {
+                { filename = "t1.m4b", format = "m4b", duration = 300 },
+                { filename = "t2.m4b", format = "m4b", duration = 240 },
+                { filename = "t3.m4b", format = "m4b", duration = 280 },
+            },
+        },
+    }
+    mock_api_configured = false
+
+    local view = detail._renderView(item)
+
+    -- Player should be created with correct data
+    local p = view.player
+    mock.assert_equals(p ~= nil, true, "player exists")
+    mock.assert_equals(p:getDuration(), 820, "total duration matches")
+    mock.assert_equals(p:getPosition(), 500, "starts at stored position")
+end)
+
+-- ============================================================
+-- Slice 9: Now-playing controls are tappable
+-- ============================================================
+
+run_test("now-playing tap play/pause: toggles player state", function()
+    local mock_manifest_book = {
+        id = "np_tap_play",
+        title = "Tap Play Test",
+        local_dir = "/tmp/absaudio_np_tp",
+        current_time = 0,
+        files = {
+            { filename = "track.m4b", type = "audio", status = "complete" },
+        },
+        chapters = {},
+    }
+    mock_manifest_books = { ["np_tap_play"] = mock_manifest_book }
+
+    local item = {
+        id = "np_tap_play",
+        title = "Tap Play Test",
+        mediaType = "book",
+        media = {
+            duration = 600,
+            metadata = { title = "Tap Play Test" },
+            audioFiles = {
+                { filename = "track.m4b", format = "m4b", duration = 600 },
+            },
+        },
+    }
+    mock_api_configured = false
+
+    local view = detail._renderView(item)
+    local p = view.player
+
+    -- Initially stopped
+    mock.assert_equals(p:getState(), "stopped", "initially stopped")
+
+    -- Tap play
+    view:_onPlayPause()
+    mock.assert_equals(p:getState(), "playing", "playing after tap")
+
+    -- Tap pause
+    view:_onPlayPause()
+    mock.assert_equals(p:getState(), "paused", "paused after second tap")
+
+    -- Tap resume
+    view:_onPlayPause()
+    mock.assert_equals(p:getState(), "playing", "resumed after third tap")
+end)
+
+run_test("now-playing skip-back: seeks 30s backward", function()
+    local mock_manifest_book = {
+        id = "np_skip_back",
+        title = "Skip Back Test",
+        local_dir = "/tmp/absaudio_np_sb",
+        current_time = 100,
+        files = {
+            { filename = "track.m4b", type = "audio", status = "complete" },
+        },
+        chapters = {},
+    }
+    mock_manifest_books = { ["np_skip_back"] = mock_manifest_book }
+
+    local item = {
+        id = "np_skip_back",
+        title = "Skip Back Test",
+        mediaType = "book",
+        media = {
+            duration = 600,
+            metadata = { title = "Skip Back Test" },
+            audioFiles = {
+                { filename = "track.m4b", format = "m4b", duration = 600 },
+            },
+        },
+    }
+    mock_api_configured = false
+
+    local view = detail._renderView(item)
+    local p = view.player
+
+    p:play()
+    p:_advanceTime(10)  -- position = 100 + 10 = 110
+
+    -- Skip back 30s
+    view:_onSkipBack()
+    mock.assert_equals(p:getPosition(), 80, "110 - 30 = 80")
+end)
+
+run_test("now-playing skip-forward: seeks 30s forward", function()
+    local mock_manifest_book = {
+        id = "np_skip_fwd",
+        title = "Skip Fwd Test",
+        local_dir = "/tmp/absaudio_np_sf",
+        current_time = 0,
+        files = {
+            { filename = "track.m4b", type = "audio", status = "complete" },
+        },
+        chapters = {},
+    }
+    mock_manifest_books = { ["np_skip_fwd"] = mock_manifest_book }
+
+    local item = {
+        id = "np_skip_fwd",
+        title = "Skip Fwd Test",
+        mediaType = "book",
+        media = {
+            duration = 600,
+            metadata = { title = "Skip Fwd Test" },
+            audioFiles = {
+                { filename = "track.m4b", format = "m4b", duration = 600 },
+            },
+        },
+    }
+    mock_api_configured = false
+
+    local view = detail._renderView(item)
+    local p = view.player
+
+    p:play()
+    p:_advanceTime(10)  -- position = 10
+
+    -- Skip forward 30s
+    view:_onSkipForward()
+    mock.assert_equals(p:getPosition(), 40, "10 + 30 = 40")
+end)
+
+-- ============================================================
+-- Test: Progress bar integration with book_detail
+run_test("now-playing: _onSeekProgress seeks player via _renderView", function()
+    local player = require("absaudio/player")
+    local detail = require("absaudio/book_detail")
+    local p = player.create({ track_durations = { 100, 200, 150 } })
+
+    local mock_manifest_book = {
+        id = "seek_test",
+        title = "Seek Test",
+        local_dir = "/tmp/seek_test",
+        current_time = 0,
+        files = {
+            { filename = "track1.m4b", type = "audio", status = "complete" },
+            { filename = "track2.m4b", type = "audio", status = "complete" },
+        },
+    }
+    mock_manifest_books = { ["seek_test"] = mock_manifest_book }
+    mock_api_configured = false
+
+    local item = {
+        id = "seek_test",
+        mediaType = "book",
+        media = {
+            duration = 450,
+            audioFiles = {{ duration = 100 }, { duration = 200 }, { duration = 150 }},
+        },
+    }
+
+    local view = detail._renderView(item)
+    view.player = p
+    p:play()  -- must be playing for getCurrentTrack to work
+    view:_onSeekProgress(170)
+    mock.assert_equals(p:getPosition(), 170, "player position updated to 170s")
+    mock.assert_equals(p:getCurrentTrack(), 2, "current track is 2 (170s within track 2)")
+end)
+
+-- ============================================================
+-- Test: Dynamic time display updates
+-- ============================================================
+run_test("now-playing: _updatePlaybackDisplay updates time text", function()
+    local player = require("absaudio/player")
+    local detail = require("absaudio/book_detail")
+    local p = player.create({ track_durations = { 100, 200 } })
+
+    local mock_manifest_book = {
+        id = "time_update_test",
+        title = "Time Update Test",
+        local_dir = "/tmp/time_test",
+        current_time = 30,
+        files = {
+            { filename = "t1.m4b", type = "audio", status = "complete" },
+            { filename = "t2.m4b", type = "audio", status = "complete" },
+        },
+    }
+    mock_manifest_books = { ["time_update_test"] = mock_manifest_book }
+    mock_api_configured = false
+
+    local item = {
+        id = "time_update_test",
+        mediaType = "book",
+        media = {
+            duration = 300,
+            audioFiles = {{ duration = 100 }, { duration = 200 }},
+        },
+    }
+
+    local view = detail._renderView(item)
+    view.player = p
+    p:play()
+
+    -- Initially at position 0 (start_position was 0)
+    view:_updatePlaybackDisplay()
+    mock.assert_equals(view.time_display_widget.text, "0:00 / 5:00", "initial time display")
+
+    -- Advance player by 90 seconds
+    p:_advanceTime(90)
+    view:_updatePlaybackDisplay()
+    mock.assert_equals(view.time_display_widget.text, "1:30 / 5:00", "time after 90s advance")
+end)
+
+run_test("now-playing: _updatePlaybackDisplay freezes when paused", function()
+    local player = require("absaudio/player")
+    local detail = require("absaudio/book_detail")
+    local p = player.create({ track_durations = { 200 } })
+
+    local mock_manifest_book = {
+        id = "freeze_test",
+        title = "Freeze Test",
+        local_dir = "/tmp/freeze_test",
+        current_time = 0,
+        files = {{ filename = "t.m4b", type = "audio", status = "complete" }},
+    }
+    mock_manifest_books = { ["freeze_test"] = mock_manifest_book }
+    mock_api_configured = false
+
+    local item = {
+        id = "freeze_test",
+        mediaType = "book",
+        media = { duration = 200, audioFiles = {{ duration = 200 }} },
+    }
+
+    local view = detail._renderView(item)
+    view.player = p
+    p:play()
+    p:_advanceTime(60)  -- position should be 60s
+    view:_updatePlaybackDisplay()
+    local playing_time = view.time_display_widget.text
+
+    p:pause()  -- freeze position
+    p:_advanceTime(60)  -- sim time passes but position frozen
+    view:_updatePlaybackDisplay()
+    mock.assert_equals(view.time_display_widget.text, playing_time, "time frozen during pause")
+end)
+
+print(string.format("\n%d passed, %d failed", passed, failed))
 if #errors > 0 then
     print("\nFailures:")
     for _, e in ipairs(errors) do

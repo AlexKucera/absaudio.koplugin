@@ -38,6 +38,7 @@ local config = require("config")
 local abs_logger = require("abs_logger")
 local error_handler = require("error_handler")
 local widget_helpers = require("absaudio/widget_helpers")
+local progress_bar = require("absaudio/progress_bar")
 local has_fs_helpers, fs_helpers = pcall(require, "absaudio/fs_helpers")
 
 -- Try to load dependencies
@@ -49,6 +50,7 @@ local has_navigator, nav = pcall(require, "absaudio/navigator")
 local has_downloader, downloader = pcall(require, "absaudio/downloader")
 local has_config, config = pcall(require, "config")
 local has_progress, progress = pcall(require, "absaudio/download_progress")
+local has_player, player = pcall(require, "absaudio/player")
 local ConfirmBox = require("ui/widget/confirmbox")
 
 local detail = {}
@@ -166,6 +168,14 @@ function BookDetailView:init()
 
     -- Cover art
     self:_addCoverArt()
+
+    -- Now-playing controls (inserted between cover art and metadata)
+    -- Only shown when audio is fully downloaded
+    self.audio_download_state = self:_detectAudioState()
+    if self.audio_download_state == "complete" and has_player then
+        self:_initPlayer()
+        self:_addNowPlaying()
+    end
 
     -- Metadata section
     self:_addMetadata()
@@ -330,6 +340,215 @@ function BookDetailView:_addCoverArt()
 end
 
 ------------------------------------------------------------------------
+-- Detect audio download state from manifest (used early in init)
+-- Returns "complete", "incomplete", or "none"
+------------------------------------------------------------------------
+function BookDetailView:_detectAudioState()
+    local audio_state = "none"
+
+    if has_manifest then
+        local book = manifest.getBook(self.item.id)
+        if book and book.files then
+            for _, f in ipairs(book.files) do
+                local ftype = f.type or "audio"
+                if ftype == "audio" then
+                    if audio_state == "none" then audio_state = f.status or "pending" end
+                    if f.status ~= "complete" then audio_state = "incomplete" end
+                end
+            end
+            if audio_state ~= "none" and audio_state ~= "incomplete" then
+                audio_state = "complete"
+            end
+        end
+    end
+
+    return audio_state
+end
+
+------------------------------------------------------------------------
+-- Metadata section: title, author, duration
+------------------------------------------------------------------------
+
+------------------------------------------------------------------------
+-- Initialize player instance from manifest data
+-- Called when audio is fully downloaded.
+------------------------------------------------------------------------
+function BookDetailView:_initPlayer()
+    self.player = nil
+
+    if not has_manifest then return end
+    local book = manifest.getBook(self.item.id)
+    if not book then return end
+
+    self.player = player.create_from_manifest(book, self.item)
+end
+
+------------------------------------------------------------------------
+-- Now-playing controls section
+-- Shows play/pause, skip buttons, progress bar, time display
+-- Only called when audio is fully downloaded.
+------------------------------------------------------------------------
+function BookDetailView:_addNowPlaying()
+    if not self.player then return end
+
+    widget_helpers.addSeparator(self.content_group, self.content_width)
+
+    -- Section header
+    local header = TextWidget:new{
+        text = "🎵 Now Playing",
+        face = Font:getFace("cfont", 16),
+        bold = true,
+        fgcolor = Blitbuffer.COLOR_DARK_GRAY,
+    }
+    table.insert(self.content_group, header)
+    table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
+
+    -- Play/Pause button (large, centered)
+    local play_btn = widget_helpers.makeTappableButton("▶", function()
+        self.detail_ref:_onPlayPause()
+    end, {
+        face = Font:getFace("tfont", 28),
+        fgcolor = Blitbuffer.COLOR_BLUE,
+        width = self.content_width,
+        tap_event_name = "TapPlayPause",
+    })
+    play_btn.detail_ref = self.detail_ref
+    table.insert(self.content_group, CenterContainer:new{
+        dimen = Geom:new{ w = self.content_width, h = play_btn.dimen.h },
+        play_btn,
+    })
+
+    -- Progress bar (seekable via tap/drag)
+    self.progress_bar = progress_bar.new({
+        width = self.content_width,
+        duration = self.player:getDuration(),
+        position = self.player:getPosition(),
+        on_seek = function(pos)
+            self.detail_ref:_onSeekProgress(pos)
+        end,
+    })
+    table.insert(self.content_group, self.progress_bar)
+    table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
+
+    -- Skip back / Time / Skip forward row
+    local skip_row = HorizontalGroup:new{}
+
+    -- Skip back 30s
+    local skip_back_btn = widget_helpers.makeTappableButton("⏪", function()
+        self.detail_ref:_onSkipBack()
+    end, {
+        face = Font:getFace("cfont", 20),
+        fgcolor = Blitbuffer.COLOR_DARK_GRAY,
+        width = 80,
+        tap_event_name = "TapSkipBack",
+    })
+    skip_back_btn.detail_ref = self.detail_ref
+    table.insert(skip_row, skip_back_btn)
+
+    -- Time display (current / total)
+    self.time_display_widget = TextWidget:new{
+        text = "0:00 / " .. widget_helpers.format_time(self.player:getDuration()),
+        face = Font:getFace("cfont", 14),
+        fgcolor = Blitbuffer.COLOR_DARK_GRAY,
+    }
+    table.insert(skip_row, self.time_display_widget)
+    table.insert(skip_row, time_display)
+
+    -- Skip forward 30s
+    local skip_fwd_btn = widget_helpers.makeTappableButton("⏩", function()
+        self.detail_ref:_onSkipForward()
+    end, {
+        face = Font:getFace("cfont", 20),
+        fgcolor = Blitbuffer.COLOR_DARK_GRAY,
+        width = 80,
+        tap_event_name = "TapSkipFwd",
+    })
+    skip_fwd_btn.detail_ref = self.detail_ref
+    table.insert(skip_row, skip_fwd_btn)
+
+    table.insert(self.content_group, skip_row)
+    table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
+end
+
+------------------------------------------------------------------------
+-- Now-playing tap handlers
+------------------------------------------------------------------------
+function BookDetailView:_onPlayPause()
+    if not self.player then return end
+
+    local state = self.player:getState()
+    if state == "stopped" or state == "paused" then
+        self.player:play()
+        self:_startPlaybackUpdates()
+        self:_updatePlaybackDisplay()
+    elseif state == "playing" then
+        self.player:pause()
+        self:_stopPlaybackUpdates()
+        self:_updatePlaybackDisplay()
+    end
+end
+
+function BookDetailView:_onSkipBack()
+    if not self.player then return end
+
+    local pos = self.player:getPosition()
+    self.player:setPosition(pos - 30)
+    self:_updatePlaybackDisplay()
+end
+
+function BookDetailView:_onSkipForward()
+    if not self.player then return end
+
+    local pos = self.player:getPosition()
+    self.player:setPosition(pos + 30)
+    self:_updatePlaybackDisplay()
+end
+
+function BookDetailView:_onSeekProgress(position)
+    if not self.player then return end
+    self.player:setPosition(position)
+    self:_updatePlaybackDisplay()
+end
+
+-- Update progress bar and time display to reflect current player state
+function BookDetailView:_updatePlaybackDisplay()
+    if not self.player then return end
+    local pos = self.player:getPosition()
+    local dur = self.player:getDuration()
+    if self.progress_bar then
+        self.progress_bar:setPosition(pos)
+    end
+    if self.time_display_widget then
+        self.time_display_widget.text = widget_helpers.format_time(pos) .. " / " .. widget_helpers.format_time(dur)
+    end
+end
+-- Periodic playback display updates (time + progress bar)
+function BookDetailView:_startPlaybackUpdates()
+    if self._playback_update_scheduled then return end
+    self._playback_update_scheduled = true
+    self:_scheduleNextPlaybackUpdate()
+end
+function BookDetailView:_stopPlaybackUpdates()
+    self._playback_update_scheduled = false
+end
+function BookDetailView:_scheduleNextPlaybackUpdate()
+    if not self._playback_update_scheduled then return end
+    if not self.player or self.player:getState() ~= "playing" then
+        self._playback_update_scheduled = false
+        return
+    end
+    UIManager:scheduleIn(0.5, function()
+        self:_updatePlaybackDisplay()
+        -- Check for auto-finish
+        if self.player:isFinished() then
+            self:_stopPlaybackUpdates()
+            self:_updatePlaybackDisplay()  -- final update showing finished state
+            return
+        end
+        self:_scheduleNextPlaybackUpdate()
+    end)
+end
+------------------------------------------------------------------------
 -- Metadata section: title, author, duration
 ------------------------------------------------------------------------
 function BookDetailView:_addMetadata()
@@ -357,8 +576,12 @@ function BookDetailView:_addMetadata()
             max_width = self.content_width,
         }
         table.insert(self.content_group, author_widget)
-        table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
-    end
+    table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
+
+    -- Store initial state for dynamic updates
+    self._last_player_state = "stopped"
+    self._playback_update_scheduled = false
+end
 
     -- Duration
     if duration and duration > 0 then
