@@ -65,6 +65,23 @@ All zero-dependency (no FFI, no KOReader globals, no I/O) — the deepest, most 
 - Builds valid `atempo` filter-chain strings for arbitrary playback speeds (issue #32, audio slice A). Single stage covers `[0.5, 2.0]`; out-of-range chains 2.0/0.5 stages (product of all stages == input speed)
 - Public API: `chain(speed)` → string (e.g. `"atempo=1.5"`, `"atempo=2,atempo=2"`); `STAGE_MIN = 0.5`, `STAGE_MAX = 2.0` constants. Errors if speed ≤ 0 or non-number. `%g` formatting mirrors `player.format_speed`
 
+### Playback backends
+
+All three implement the **same backend contract** so `player.create()`'s strategy can swap them unchanged: `new(opts)`, `play/pause/resume/stop/close`, `getPosition/setPosition/getDuration`, `getCurrentTrack/getPlaybackSpeed/setPlaybackSpeed`, `isFinished/getState`. `player.create()` selects via `opts.backend`: explicit `"stub"`/`"inkview"`/`"ffmpeg"`, or omitted/`"auto"` → auto-detect via `ffmpeg_backend.is_available()` then fall back to stub (so dev/tests are unaffected). `inst:getBackendName()` reports which was selected.
+
+#### `stub_backend.lua` — emulator/test backend
+- Wall-clock (real-time) position by default; `_advanceTime(delta)` switches to a manual virtual clock for deterministic tests. Used everywhere ffmpeg/inkview are unavailable.
+
+#### `inkview_backend.lua` — PocketBook inkview audio API (FFI)
+- Wraps `libinkview` playback via LuaJIT FFI; `is_available()` = guarded `ffi.load("inkview")`. DEPRECATED path: the inkview audio API is gutted on the PB700K3 (see decision log) — kept as a fallback, not the primary.
+
+#### `ffmpeg_backend.lua` — real FFmpeg+ALSA backend (skeleton, issue #33 / slice B)
+- Backend for real in-app audio via `libaudio-engine.so` (FFmpeg decode + ALSA output), PRD #31 / decision log (Path C, Design 3 decoupled ring buffer).
+- **Slice B status**: transport state machine, position bookkeeping, and `is_available()` are REAL & fully unit-tested on the dev Mac. The FFI decode producer + ALSA output consumer are MOCKED (land in slices #34+).
+- Position tracked in ms (natural FFmpeg PTS unit); clamped via `time_math.clamp`, converted via `time_math.ms_to_seconds`/`seconds_to_ms`. Owns a `ring_buffer` (slice A) for the decoupled design (not fed by decode yet).
+- `is_available()` = guarded `pcall(ffi.load("audio-engine"))`, memoized; false on dev. Mockable via `ffmpeg_backend._set_probe_override(fn)` (module) or `opts.ffi_probe` (per-instance). Mirrors stub's real-time + `_advanceTime` time model so transport tests are shared.
+- **All FFI access must stay pcall-guarded** — a missing/undefined symbol must return `false`, never crash (lesson from the `IsPlayingMP3` probe crash).
+
 ## Work Guidance
 
 - KOReader font names: `cfont`, `tfont`, `smalltfont`, `x_smalltfont`, `largeffont`, `scfont` — use with explicit size: `Font:getFace("tfont", 26)`
@@ -76,7 +93,7 @@ All zero-dependency (no FFI, no KOReader globals, no I/O) — the deepest, most 
 
 ## Verification
 
-- Run full test suite from project root: `busted spec/`
+- Run tests per module from project root: `luajit spec/test_<module>.lua` (e.g. `luajit spec/test_ffmpeg_backend.lua`). `busted` is not installed — each test file is a standalone luajit script with a shared `spec/test_helper.lua` mock harness.
 - Each module has a corresponding `spec/test_<module>.lua`
 - All tests must pass before committing
 

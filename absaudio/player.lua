@@ -31,6 +31,14 @@ local function get_inkview_backend()
     return inkview_backend_mod
 end
 
+local ffmpeg_backend_mod = nil
+local function get_ffmpeg_backend()
+    if not ffmpeg_backend_mod then
+        ffmpeg_backend_mod = require("absaudio/ffmpeg_backend")
+    end
+    return ffmpeg_backend_mod
+end
+
 local player = {}
 
 ------------------------------------------------------------------------
@@ -159,32 +167,56 @@ function player.create(opts)
     local playback_speed = opts.playback_speed or 1.0
     local on_finished = opts.on_finished
 
-    -- Select backend (default: stub for testing/emulator)
-    local backend_name = opts.backend or "stub"
+    -- Select backend.
+    --   Explicit "stub" / "inkview" / "ffmpeg" select that backend directly.
+    --   Omitted / "auto" / unknown → auto-detect via ffmpeg_backend.is_available(),
+    --   falling back to stub (so emulator/tests are unaffected on the dev machine).
+    local backend_name = opts.backend
     local backend
+    local selected_name = backend_name or "auto"
+
+    local backend_opts = {
+        track_durations = track_durations,
+        file_paths = file_paths,
+        start_position = start_position,
+        playback_speed = playback_speed,
+        on_finished = on_finished,
+    }
 
     if backend_name == "inkview" then
         local iv = get_inkview_backend()
-        backend = iv.new({
-            track_durations = track_durations,
-            file_paths = file_paths,
-            start_position = start_position,
-            playback_speed = playback_speed,
-            on_finished = on_finished,
-        })
-    else
-        -- Default: stub backend
+        backend = iv.new(backend_opts)
+        selected_name = "inkview"
+    elseif backend_name == "ffmpeg" then
+        local fb = get_ffmpeg_backend()
+        backend = fb.new(backend_opts)
+        selected_name = "ffmpeg"
+    elseif backend_name == "stub" then
         local sb = get_stub_backend()
-        backend = sb.new({
-            track_durations = track_durations,
-            start_position = start_position,
-            playback_speed = playback_speed,
-            on_finished = on_finished,
-        })
+        backend = sb.new(backend_opts)
+        selected_name = "stub"
+    else
+        -- auto-detect: prefer FFmpeg on device, fall back to stub
+        local use_ffmpeg = false
+        local fb
+        local ok_fb = pcall(function() fb = get_ffmpeg_backend() end)
+        if ok_fb and fb.is_available() then
+            use_ffmpeg = true
+        end
+        if use_ffmpeg then
+            backend = fb.new(backend_opts)
+            selected_name = "ffmpeg"
+        else
+            local sb = get_stub_backend()
+            backend = sb.new(backend_opts)
+            selected_name = "stub"
+        end
     end
 
     -- Player instance: delegates all calls to the selected backend
     local inst = {}
+
+    function inst:getBackendName() return selected_name end
 
     function inst:getState() return backend:getState() end
     function inst:getPosition() return backend:getPosition() end
