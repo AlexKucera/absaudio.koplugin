@@ -19,6 +19,7 @@ local HorizontalGroup = require("ui/widget/horizontalgroup")
 local HorizontalSpan = require("ui/widget/horizontalspan")
 local ImageWidget = require("ui/widget/imagewidget")
 local IconWidget = require("ui/widget/iconwidget")
+local InfoMessage = require("ui/widget/infomessage")
 -- ConfirmBox removed: download/delete handlers live in book_detail.lua
 local InputDialog = require("ui/widget/inputdialog")
 local InputContainer = require("ui/widget/container/inputcontainer")

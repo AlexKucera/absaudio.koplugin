@@ -60,6 +60,7 @@ They capture what was done, decisions & rationale, gotchas & fixes, and next ste
 | 2026-06-14 | issue | [fix-playback-ui-not-updating_log.md](docs/devlog/20260614-fix-playback-ui-not-updating_log.md) | Fixed frozen playback UI: stub backend now uses real-time wall clock for emulator (was frozen virtual clock); added play/pause icon toggle; 4 new tests; 43 book_detail + 75 player pass |
 | 2026-06-14 | generic | [fix-playback-ui-full-screen-flash_log.md](docs/devlog/20260614-fix-playback-ui-full-screen-flash_log.md) | Playback UI full-screen e-ink flash every 0.5s; changed `setDirty(target, "full")` → `"partial"` in `_updatePlaybackDisplay()`; reserve `"full"` for widget swaps; 51 book_detail / 366 total pass
 | 2026-06-14 | generic | [fix-download-dir-tmp-fallback_log.md](docs/devlog/20260614-fix-download-dir-tmp-fallback_log.md) | Removed silent `/tmp/audiobooks` fallback in downloader; added `config.default_download_dir()`/`get_download_dir()` (persistent KOReader data dir); pre-fill Settings field; +4 config tests; 18 config + 82 downloader pass
+| 2026-06-14 | generic | [fix-library-browser-infomessage-crash_log.md](docs/devlog/20260614-fix-library-browser-infomessage-crash_log.md) | library_browser.lua used InfoMessage (4 sites) without requiring it → crash in prepare() error path; added require; fixes 7 long-standing test_library_browser InfoMessage-nil failures; also fixed audio_probe IsPlayingMP3 undefined-symbol crash guard; 17 library_browser pass |
 | 2026-06-09 | issue | [issue17-dashboard-data-render-split_log.md](docs/devlog/20260609-issue17-dashboard-data-render-split_log.md) | Extracted `dashboard.prepare()` from `show()`; 4 new tests; 166 total pass |
 | 2026-06-09 | issue | [issue18-book-detail-data-render-split_log.md](docs/devlog/20260609-issue18-book-detail-data-render-split_log.md) | Extracted `detail.prepare()` from `show()`; 4 new tests; 172 total pass |
 | 2026-06-09 | issue | [issue20-main-lua-navigator-tests_log.md](docs/devlog/20260609-issue20-main-lua-navigator-tests_log.md) | Created `spec/test_main.lua` with 10 tests; navigator registration, onOpenDashboard wiring, dispatcher routing, first-run behavior; 196 total pass |
@@ -111,7 +112,7 @@ They capture what was done, decisions & rationale, gotchas & fixes, and next ste
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **absaudio.koplugin** (759 symbols, 774 relationships, 0 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **absaudio.koplugin** (758 symbols, 773 relationships, 0 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

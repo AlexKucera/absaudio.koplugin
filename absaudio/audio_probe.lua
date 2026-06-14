@@ -1,124 +1,32 @@
--- Audio capability probe v4 — extract the native audio API.
+-- Audio capability probe v5 — reverse-engineer the position-read API (de-risk path B).
 --
--- CONTEXT: v3 discovered libaudio-engine.so + a full FFmpeg/Libav decode stack
--- (libavcodec/avformat/avutil/swresample) + libasound + the safe tts_sm ALSA
--- loopback chain on the PB700K3. The native audiobook player (bookshelf.app /
--- reader_controller.app) links libaudio-engine.so. This probe dumps that
--- library's EXPORTED SYMBOLS so we can design a real audio backend (play/seek/
--- pause/position/speed) against the actual API.
+-- GOAL: determine whether GetAudioPlayingInfo() exposes a clean, readable
+-- position+duration+state struct that a live-sync audio backend (path B) could
+-- poll. Also confirm the read-only state getters (hw_is_audio_book_playing, etc.).
 --
--- METHOD: a pure-Lua ELF32 .dynsym/.dynstr parser. Exported symbol names live
--- verbatim in the .dynstr section, so dumping it yields the complete public API.
--- No external tools (readelf/nm) — none exist on the stock device.
+-- TECHNIQUE:
+--   * Call GetAudioPlayingInfo() TWICE with a ~1.5s gap. The field whose value
+--     CHANGES between calls is the live playback position. We know this book's
+--     duration (~6425.24 s) as a fingerprint to identify the duration field.
+--   * Dump the struct interpreted four ways (int32 / int64 / float / double).
+--   * Only call READ-ONLY getters. Never call transport fns (hw_mp_setstate etc.)
+--     — this probe must not alter playback.
 --
--- SAFETY: DETECTION-ONLY (no PlayFile/aplay/hw:0). Emits no sound.
+-- SAFETY:
+--   * Unknown C signatures → for GetAudioPlayingInfo we declare it as
+--     (void* buf) -> void*, pass a zeroed buffer (covers the "fills out-struct"
+--     pattern), AND range-check the return value against /proc/self/maps before
+--     dereferencing (covers the "returns internal ptr" pattern without crashing
+--     on a garbage return).
+--   * Emits no sound; never opens hw:0.
+--
+-- RUN INSTRUCTIONS (IMPORTANT):
+--   1. Start the NATIVE PocketBook audiobook player and PLAY your downloaded
+--      book (so live state exists to read).
+--   2. Then run this probe from the absaudio menu.
 local audio_probe = {}
 audio_probe.REPORT_PATH = "/mnt/ext1/absaudio_probe_report.txt"
 
--- ---------------------------------------------------------------------------
--- Pure-Lua ELF32 reader (little-endian). Reads u16/u32 from a byte string.
--- ---------------------------------------------------------------------------
-local function u16le(s, off)
-    if off < 1 or off + 1 > #s then return nil end
-    local b0, b1 = s:byte(off, off + 1)
-    return b0 + b1 * 256
-end
-local function u32le(s, off)
-    if off < 1 or off + 3 > #s then return nil end
-    local b0, b1, b2, b3 = s:byte(off, off + 3)
-    return b0 + b1 * 256 + b2 * 65536 + b3 * 16777216
-end
-local function cstr(s, off)
-    -- read NUL-terminated string starting at byte offset off (1-based)
-    local endp = s:find(string.char(0), off, true)
-    if not endp then return s:sub(off) end
-    return s:sub(off, endp - 1)
-end
-
---- Parse an ELF binary and return its exported symbol names (functions + objects).
--- @param blob string  full file bytes
--- @return array of {name=, type=, value=} (type: "func"/"obj"/"other"), or {} on failure
-local function elf_exports(blob)
-    if not blob or #blob < 52 then return {}, "too small" end
-    if blob:sub(1, 4) ~= "\127ELF" then return {}, "not ELF" end
-    local ei_class = blob:byte(5)       -- 1=32-bit, 2=64-bit
-    local ei_data = blob:byte(6)        -- 1=little-endian
-    if ei_class ~= 1 then return {}, "not ELF32 (class=" .. tostring(ei_class) .. ")" end
-    if ei_data ~= 1 then return {}, "not little-endian" end
-
-    local e_shoff = u32le(blob, 33)     -- section header table offset
-    local e_shentsize = u16le(blob, 47)
-    local e_shnum = u16le(blob, 49)
-    local e_shstrndx = u16le(blob, 51)
-    if not (e_shoff and e_shentsize and e_shnum) then return {}, "bad header" end
-
-    -- Section header layout (Elf32_Shdr, 40 bytes, 1-based byte offsets):
-    --  sh_name(1,4) sh_type(5,4) sh_flags(9,4) sh_addr(13,4) sh_offset(17,4)
-    --  sh_size(21,4) sh_link(25,4) sh_info(29,4) sh_addralign(33,4) sh_entsize(37,4)
-    local SHT_DYNSYM = 11
-    local sections = {}
-    for i = 0, e_shnum - 1 do
-        local base = e_shoff + i * e_shentsize + 1  -- +1 -> 1-based
-        local sh_type = u32le(blob, base + 4)
-        table.insert(sections, {
-            sh_name   = u32le(blob, base),
-            sh_type   = sh_type,
-            sh_offset = u32le(blob, base + 16),
-            sh_size   = u32le(blob, base + 20),
-            sh_link   = u32le(blob, base + 24),
-            sh_entsize= u32le(blob, base + 36),
-        })
-    end
-
-    -- Find .shstrtab to name sections (optional) and .dynsym.
-    local function section_strtab(idx)
-        if idx < 1 or idx > #sections then return nil end
-        local s = sections[idx]
-        if not (s.sh_offset and s.sh_size) then return nil end
-        return blob:sub(s.sh_offset + 1, s.sh_offset + s.sh_size)
-    end
-    local shstrtab = (e_shstrndx and e_shstrndx < #sections) and section_strtab(e_shstrndx + 1) or nil
-    local function section_name(i)
-        if not shstrtab then return "" end
-        return cstr(shstrtab, sections[i].sh_name + 1) or ""
-    end
-
-    local exports = {}
-    for i, s in ipairs(sections) do
-        local is_dynsym = (s.sh_type == SHT_DYNSYM)
-        if not is_dynsym and shstrtab then
-            local nm = section_name(i)
-            if nm == ".dynsym" then is_dynsym = true end
-        end
-        if is_dynsym and s.sh_entsize and s.sh_entsize >= 16 and s.sh_link then
-            local strtab = section_strtab(s.sh_link + 1)  -- +1: sh_link is 0-based; sections[] is 1-based
-            if strtab then
-                local n = math.floor(s.sh_size / s.sh_entsize)
-                for k = 0, n - 1 do
-                    local so = s.sh_offset + k * s.sh_entsize + 1  -- 1-based
-                    local st_name = u32le(blob, so)
-                    local st_info = blob:byte(so + 12)
-                    if st_name and st_name ~= 0 then
-                        local name = cstr(strtab, st_name + 1)
-                        if name and #name > 0 and not name:match("^%$") then
-                            local bind = (st_info and (math.floor(st_info / 16))) or 0
-                            local stype = (st_info and (st_info % 16)) or 0
-                            -- GLOBAL(1)/WEAK(2) bindings + FUNC(2)/OBJECT(1) types = real exports
-                            if (bind == 1 or bind == 2) and name:sub(1,1) ~= "_" then
-                                table.insert(exports, { name = name,
-                                    type = (stype == 2 and "func") or (stype == 1 and "obj") or "other" })
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
-    table.sort(exports, function(a, b) return a.name < b.name end)
-    return exports
-end
-
--- ---------------------------------------------------------------------------
 function audio_probe.run()
     local lines = {}
     local function out(s) table.insert(lines, tostring(s)) end
@@ -126,101 +34,210 @@ function audio_probe.run()
     local function sh(cmd)
         local h = io.popen(cmd .. " 2>/dev/null")
         if not h then return "" end
-        local r = h:read("*a") or ""
-        h:close()
+        local r = h:read("*a") or ""; h:close()
         return (r:gsub("^%s+", ""):gsub("%s+$", ""))
     end
-    local function exists(p) local f=io.open(p,"r"); if not f then return false end; f:close(); return true end
 
-    out("absaudio audio capability probe v4")
+    out("absaudio audio capability probe v5 (position-API reverse engineering)")
     out("run: " .. os.date("%Y-%m-%d %H:%M:%S"))
 
-    -- Libraries to dump (v3 found these in /ebrmain/cramfs/lib = /usr/lib = /ebrmain/lib).
-    local targets = {
-        { path = "/ebrmain/cramfs/lib/libaudio-engine.so", why = "native player engine (PRIMARY)" },
-        { path = "/usr/lib/libaudio-engine.so",            why = "alternate location" },
-        { path = "/ebrmain/cramfs/lib/libavcodec.so.60.31.102", why = "FFmpeg: confirm AAC/m4b decoder" },
-        { path = "/ebrmain/cramfs/lib/libframework2.so",   why = "possible high-level media facade" },
-        { path = "/ebrmain/cramfs/lib/libinkview.so",      why = "cross-check exports vs v2/v3 scans" },
-    }
+    local ffi_ok, ffi = pcall(require, "ffi")
+    local lib  -- libinkview handle
+    if ffi_ok then
+        pcall(ffi.cdef, [[
+            void *GetAudioPlayingInfo(void *out_buf);
+            void *GetAudioOutput(void);
+            int  get_audio_status(void);
+            int  hw_is_audio_book_playing(void);
+            int  hw_is_player_playing(void);
+            int  hw_is_reader_player_playing(void);
+            int  hw_is_browser_playing(void);
+            int  hw_is_screen_playing(void);
+            int  hw_mp_getvolume(void);
+            int  GetVolume(void);
+            int  IsPlayingMP3(void);
+            void *dlopen(const char*, int);
+            void *dlsym(void*, const char*);
+            char *dlerror(void);
+        ]])
+        local ok, l = pcall(ffi.load, "inkview")
+        if ok then lib = l; out("libinkview loaded") else out("libinkview load FAILED: "..tostring(l)) end
+    else
+        out("require('ffi') FAILED: "..tostring(ffi))
+    end
 
-    -- Highlight names matching these patterns (likely audio-control API).
-    local hot_patterns = { "play", "pause", "seek", "position", "duration", "speed",
-                           "track", "open", "load", "init", "volume", "audio", "media",
-                           "player", "stop", "resume", "chapter", "percent", "time" }
+    -- Pointer NULL test (LuaJIT NULL cdata is not == nil reliably).
+    local function is_null(p)
+        if p == nil then return true end
+        local ok, n = pcall(function() return tonumber(ffi.cast("uintptr_t", p)) end)
+        return (not ok) or n == 0
+    end
 
-    for _, t in ipairs(targets) do
-        section(t.path)
-        out("  (" .. t.why .. ")")
-        if not exists(t.path) then
-            out("  <not found>")
-        else
-            local f = io.open(t.path, "rb")
-            local blob = f and f:read("*a"); if f then f:close() end
-            if not blob then out("  <unreadable>"); goto continue end
-            out(string.format("  size: %d bytes", #blob))
-            local exports, err = elf_exports(blob)
-            if err then out("  ELF parse: " .. err) end
-            out(string.format("  exported symbols: %d", #exports))
-            -- Print every export if few; otherwise print hot matches + a count.
-            local hot, others = {}, {}
-            for _, e in ipairs(exports) do
-                local ln = e.name:lower()
-                local is_hot = false
-                for _, p in ipairs(hot_patterns) do
-                    if ln:find(p, 1, true) then is_hot = true; break end
-                end
-                if is_hot then table.insert(hot, e.name)
-                else table.insert(others, e.name) end
-            end
-            out("  -- HOT (audio-control candidates): " .. #hot .. " --")
-            for _, n in ipairs(hot) do out("    " .. n) end
-            -- Dump all exports if the lib is small (libaudio-engine likely is).
-            if #exports <= 250 then
-                out("  -- ALL exports (" .. #exports .. ") --")
-                for _, e in ipairs(exports) do
-                    out(string.format("    %-10s %s", e.type, e.name))
-                end
-            else
-                out("  -- (large lib; " .. #others .. " non-hot exports omitted) --")
-            end
+    -- Build mapped-memory range list from /proc/self/maps to validate pointers.
+    local maps = {}
+    local mf = io.open("/proc/self/maps", "r")
+    if mf then
+        for line in mf:lines() do
+            local a, b = line:match("^(%x+)-(%x+)%s")
+            if a and b then maps[#maps+1] = { tonumber(a, 16), tonumber(b, 16) } end
         end
-        ::continue::
+        mf:close()
+    end
+    local function in_range(p)
+        if is_null(p) then return false end
+        local ok, n = pcall(function() return tonumber(ffi.cast("uintptr_t", p)) end)
+        if not ok then return false end
+        for _, r in ipairs(maps) do if n >= r[1] and n < r[2] then return true end end
+        return false
     end
 
     -- =====================================================================
-    section("NATIVE PLAYER PROCESS LIBS (start the native player first for best data)")
+    section("1. READ-ONLY STATE GETTERS (safe: int (void))")
     -- =====================================================================
-    local pids = sh("ps | grep -iE 'bookshelf|reader_controller|pocketbook' | grep -v grep | grep -v audio_probe")
-    if pids ~= "" then
-        out("-- candidate native-app processes:")
-        out(pids)
-        for pid in pids:gmatch("(%d+)") do
-            local maps = sh("cat /proc/" .. pid .. "/maps 2>/dev/null | grep -iE '\\.so' | awk '{print $6}' | sort -u")
-            local audio_libs = {}
-            for line in (maps or ""):gmatch("[^\n]+") do
-                if line:lower():find("audio", 1, true) or line:lower():find("media", 1, true)
-                   or line:lower():find("avcodec", 1, true) or line:lower():find("framework", 1, true) then
-                    table.insert(audio_libs, line)
-                end
+    if lib then
+        local function trycall(name)
+            -- lib[name] itself can throw 'undefined symbol' for symbols we
+            -- declared in cdef but that aren't exported by THIS firmware build
+            -- (e.g. IsPlayingMP3). Wrap the access too, not just the call.
+            local ok_lookup, fn = pcall(function() return lib[name] end)
+            if not ok_lookup or not fn then
+                out(string.format("  %-30s <not exported>", name)); return
             end
-            if #audio_libs > 0 then
-                out("-- pid " .. pid .. " audio/media libs loaded:")
-                for _, l in ipairs(audio_libs) do out("    " .. l) end
+            local ok, v = pcall(function() return fn() end)
+            if ok then out(string.format("  %-30s = %s", name, tostring(v)))
+            else out(string.format("  %-30s <call failed: %s>", name, tostring(v))) end
+        end
+        for _, n in ipairs({"get_audio_status", "hw_is_audio_book_playing",
+                            "hw_is_player_playing", "hw_is_reader_player_playing",
+                            "hw_is_browser_playing", "hw_is_screen_playing",
+                            "hw_mp_getvolume", "GetVolume", "IsPlayingMP3"}) do trycall(n) end
+    else
+        out("(libinkview not loaded — skipping)")
+    end
+
+    -- =====================================================================
+    section("2. GetAudioPlayingInfo — struct dump (PASS 1)")
+    -- =====================================================================
+    -- Fingerprint: this book duration ~6425.24 s (~6425240 ms).
+    local DUR_S, DUR_MS = 6425, 6425240
+    local function near(v, target, tol) return type(v)=="number" and math.abs(v-target) <= tol end
+
+    local function dump_struct(label, base_ptr, nbytes)
+        if not (ffi_ok and base_ptr) or is_null(base_ptr) then out(label..": <null>"); return end
+        if not in_range(base_ptr) then out(label..": <pointer outside mapped range; not dereferencing>"); return end
+        out(string.format("%s (ptr=%s, %d bytes):", label,
+            string.format("0x%x", tonumber(ffi.cast("uintptr_t", base_ptr)) or 0), nbytes))
+        local n32 = math.floor(nbytes/4)
+        local p32 = ffi.cast("int32_t*", base_ptr)
+        local pf  = ffi.cast("float*", base_ptr)
+        local p64 = ffi.cast("int64_t*", base_ptr)
+        local pd  = ffi.cast("double*", base_ptr)
+        for i = 0, n32 - 1 do
+            local iv = tonumber(p32[i])
+            local fv = tonumber(pf[i])
+            local tags = {}
+            if near(iv, DUR_S, 2) or near(iv, DUR_MS, 2000) then tags[#tags+1]="DUR?" end
+            if near(fv, DUR_S, 2) then tags[#tags+1]="DUR(f)?" end
+            if (iv == 0 or iv == 2 or iv == 3) then tags[#tags+1]="state?" end
+            local tag = (#tags > 0) and ("  <" .. table.concat(tags, ",") .. ">") or ""
+            out(string.format("  [%2d] i32=%-12d f=%.3f%s", i, iv, fv, tag))
+        end
+        -- int64 / double view (8-byte aligned)
+        for i = 0, math.floor(nbytes/8) - 1 do
+            local i64 = tonumber(p64[i])
+            local dv  = tonumber(pd[i])
+            local tags = {}
+            if near(i64, DUR_MS, 2000) then tags[#tags+1]="DUR(ms)?" end
+            if near(dv, DUR_S, 0.5) then tags[#tags+1]="DUR(d)?" end
+            if (#tags > 0) or (i < 4) then
+                local tag2 = (#tags > 0) and ("  <" .. table.concat(tags, ",") .. ">") or ""
+                out(string.format("  [%2d] i64=%-14d d=%.5f%s", i, i64, dv, tag2))
             end
+        end
+    end
+
+    local buf1, ret1, ok1, err1
+    if ffi_ok and lib and lib.GetAudioPlayingInfo then
+        buf1 = ffi.new("unsigned char[256]")
+        ok1, err1 = pcall(function() ret1 = lib.GetAudioPlayingInfo(buf1) end)
+        if not ok1 then out("GetAudioPlayingInfo call FAILED: "..tostring(err1))
+        else
+            out("PASS 1 returned without error.")
+            dump_struct("  [caller buffer]", ffi.cast("void*", buf1), 256)
+            dump_struct("  [return value]",  ret1, 128)
         end
     else
-        out("-- no native app process detected (unusual; player may not be running)")
+        out("GetAudioPlayingInfo not available")
     end
 
     -- =====================================================================
-    section("SUMMARY")
+    section("3. GetAudioPlayingInfo — PASS 2 (1.5s later; changed field = POSITION)")
     -- =====================================================================
-    out("Goal: identify a clean C API in libaudio-engine.so (play/seek/pause/")
-    out("position/speed). If exports include such functions, an FFI backend")
-    out("routed through the system's FFmpeg + ALSA tts_sm chain is viable with")
-    out("full speed+seek+position on the PB700K3 — using the firmware's own")
-    out("safe amplifier-managed path.")
+    -- Sleep via a busy loop (no socket/ffi.sleep dependency); ~1.5s.
+    local t0 = os.time()
+    while os.difftime(os.time(), t0) < 1.5 do end
+
+    if ffi_ok and lib and lib.GetAudioPlayingInfo and ok1 then
+        local buf2 = ffi.new("unsigned char[256]")
+        local ret2
+        local ok2 = pcall(function() ret2 = lib.GetAudioPlayingInfo(buf2) end)
+        if ok2 then
+            out("PASS 2 (1.5s later). Diffing caller-buffer int32 fields:")
+            if in_range(ffi.cast("void*", buf1)) and in_range(ffi.cast("void*", buf2)) then
+                local p1 = ffi.cast("int32_t*", buf1)
+                local p2 = ffi.cast("int32_t*", buf2)
+                local pf1 = ffi.cast("float*", buf1)
+                local pf2 = ffi.cast("float*", buf2)
+                local pd1 = ffi.cast("double*", buf1)
+                local pd2 = ffi.cast("double*", buf2)
+                for i = 0, 63 do
+                    local a, b = tonumber(p1[i]), tonumber(p2[i])
+                    if a ~= b then
+                        local af, bf = tonumber(pf1[i]), tonumber(pf2[i])
+                        out(string.format("  [%2d] CHANGED  i32: %d -> %d (Δ=%d)   f: %.3f -> %.3f",
+                            i, a, b, b-a, af, bf))
+                    end
+                end
+                for i = 0, 31 do
+                    local a, b = tonumber(pd1[i]), tonumber(pd2[i])
+                    if math.abs((a or 0)-(b or 0)) > 0.001 then
+                        out(string.format("  [d%2d] CHANGED  d: %.4f -> %.4f", i, a, b))
+                    end
+                end
+                out("  (A field that advances by ~1-2 over the 1.5s gap = live position in seconds.)")
+            else
+                out("  (buffers not in mapped range — skipping diff)")
+            end
+            dump_struct("  [return value pass 2]", ret2, 128)
+        else
+            out("PASS 2 failed")
+        end
+    end
+
+    -- =====================================================================
+    section("4. GetAudioOutput")
+    -- =====================================================================
+    if ffi_ok and lib and lib.GetAudioOutput then
+        local ok, ao = pcall(function() return lib.GetAudioOutput() end)
+        if ok and in_range(ao) then
+            local s = ""
+            pcall(function() s = ffi.string(ffi.cast("char*", ao)) end)
+            out("GetAudioOutput (as string): "..tostring(s))
+            dump_struct("GetAudioOutput", ao, 64)
+        else
+            out("GetAudioOutput: "..(ok and "<null/out-of-range>" or "<failed>"))
+        end
+    end
+
+    -- =====================================================================
+    section("5. INTERPRETATION NOTES")
+    -- =====================================================================
+    out("DURATION fingerprint for this book: ~6425.24 s (6425240 ms).")
+    out("Any int32/float field ≈6425 or int ≈6425240 = likely DURATION.")
+    out("The field that changes between PASS 1 and PASS 2 (Δ≈1-2 over 1.5s) = POSITION (seconds).")
+    out("A field ==2 likely = MP_PLAYING state; ==0 = MP_STOPPED.")
+    out("If a clean position+duration+state emerge here, path B (in-app hw_mp backend")
+    out("with live ABS playhead sync) is viable without reverse-engineering more.")
 
     local report = table.concat(lines, "\n") .. "\n"
     local rf = io.open(audio_probe.REPORT_PATH, "w")
