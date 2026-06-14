@@ -24,7 +24,7 @@ package.loaded["device"] = {
     },
     hasKeys = function() return false end,
     isTouchDevice = function() return false end,
-    input = { group = { Back = "Back" } },
+    input = { group = { Back = { "Back" } } },
 }
 package.loaded["ui/font"] = {
     getFace = function(_, size) return { size = size } end,
@@ -973,7 +973,7 @@ package.loaded["device"] = package.loaded["device"] or {
     screen = { getSize = function() return { w = 600, h = 800 } end },
     hasKeys = function() return false end,
     isTouchDevice = function() return true end,
-    input = { group = { Back = "Back" } },
+    input = { group = { Back = { "Back" } } },
 }
 package.loaded["ui/font"] = package.loaded["ui/font"] or {
     getFace = function() return {} end,

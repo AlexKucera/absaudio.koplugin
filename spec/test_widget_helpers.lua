@@ -25,7 +25,7 @@ package.loaded["device"] = {
     },
     hasKeys = function() return false end,
     isTouchDevice = function() return false end,
-    input = { group = { Back = "Back" } },
+    input = { group = { Back = { "Back" } } },
 }
 package.loaded["ui/font"] = {
     getFace = function() return {} end,

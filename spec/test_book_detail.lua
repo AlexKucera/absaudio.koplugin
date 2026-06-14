@@ -80,7 +80,7 @@ package.loaded["ui/widget/verticalspan"] = make_widget_stub()
 local mock_device = {
     hasKeys = function() return true end,
     isTouchDevice = function() return true end,
-    input = { group = { Back = "Back" } },
+    input = { group = { Back = { "Back" } } },
     screen = {
         getSize = function() return { w = 600, h = 800 } end,
         scaleBySize = function(n) return n end,
