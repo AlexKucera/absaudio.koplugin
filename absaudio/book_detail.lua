@@ -680,7 +680,11 @@ function BookDetailView:_updatePlaybackDisplay()
     end
 
     local target = self.detail_ref or self
-    UIManager:setDirty(target, "full")
+    -- Partial (non-flashing) refresh — a "full" refresh here would black-flash
+    -- the entire e-ink screen every 0.5s update. "partial" repaints without the
+    -- flash, matching the native audiobook player. ("full" is reserved for widget
+    -- swaps/transitions.)
+    UIManager:setDirty(target, "partial")
 end
 -- Periodic playback display updates (time + progress bar)
 function BookDetailView:_startPlaybackUpdates()
