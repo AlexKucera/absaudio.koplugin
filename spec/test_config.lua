@@ -194,30 +194,64 @@ end)
 -- Download directory resolution (persistent default, no /tmp fallback)
 -- ============================================================
 
-run_test("default_download_dir returns persistent KOReader data dir (never /tmp)", function()
+run_test("default_download_dir prefers PocketBook native-player dir when it exists", function()
     mock_settings = mock.create_lua_settings({})
     config.init()
+    config._exists_dir = function(path) return path == "/mnt/ext1/Audio Books" end
     local dir = config.default_download_dir()
-    mock.assert_equals(dir, "/tmp/koreader-test/data/absaudio_books", "should be under KOReader data dir")
+    mock.assert_equals(dir, "/mnt/ext1/Audio Books", "should use native-player dir so stock player picks it up")
+    config._exists_dir = nil  -- restore default
+end)
+
+run_test("default_download_dir falls back to persistent KOReader data dir when native dir absent", function()
+    mock_settings = mock.create_lua_settings({})
+    config.init()
+    config._exists_dir = function(_) return false end
+    local dir = config.default_download_dir()
+    mock.assert_equals(dir, "/tmp/koreader-test/data/absaudio_books", "no native dir -> under KOReader data dir")
     mock.assert_equals(dir:match("/tmp/audiobooks") == nil, true, "must NEVER use the ephemeral /tmp/audiobooks fallback")
+    config._exists_dir = nil
+end)
+
+run_test("default_download_dir NEVER returns /tmp/audiobooks under any condition", function()
+    mock_settings = mock.create_lua_settings({})
+    config.init()
+    config._exists_dir = function(_) return false end
+    local dir = config.default_download_dir()
+    mock.assert_equals(dir:match("/tmp/audiobooks"), nil, "never the ephemeral fallback")
+    config._exists_dir = nil
 end)
 
 run_test("get_download_dir returns configured value when set", function()
     mock_settings = mock.create_lua_settings({ download_dir = "/mnt/ext1/audiobooks" })
     config.init()
+    config._exists_dir = function(_) return false end
     mock.assert_equals(config.get_download_dir(), "/mnt/ext1/audiobooks", "configured value wins")
+    config._exists_dir = nil
 end)
 
-run_test("get_download_dir returns persistent default when unset", function()
+run_test("get_download_dir returns native-player default when unset and dir exists", function()
     mock_settings = mock.create_lua_settings({})
     config.init()
-    mock.assert_equals(config.get_download_dir(), "/tmp/koreader-test/data/absaudio_books", "unset -> persistent default")
+    config._exists_dir = function(path) return path == "/mnt/ext1/Audio Books" end
+    mock.assert_equals(config.get_download_dir(), "/mnt/ext1/Audio Books", "unset + native dir exists -> native dir")
+    config._exists_dir = nil
+end)
+
+run_test("get_download_dir returns persistent default when unset and native dir absent", function()
+    mock_settings = mock.create_lua_settings({})
+    config.init()
+    config._exists_dir = function(_) return false end
+    mock.assert_equals(config.get_download_dir(), "/tmp/koreader-test/data/absaudio_books", "unset + no native dir -> persistent default")
+    config._exists_dir = nil
 end)
 
 run_test("get_download_dir falls back to default for empty/whitespace value", function()
     mock_settings = mock.create_lua_settings({ download_dir = "   " })
     config.init()
+    config._exists_dir = function(_) return false end
     mock.assert_equals(config.get_download_dir(), "/tmp/koreader-test/data/absaudio_books", "whitespace -> default, never /tmp")
+    config._exists_dir = nil
 end)
 
 -- ============================================================

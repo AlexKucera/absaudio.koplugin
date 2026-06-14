@@ -89,14 +89,32 @@ function config.get_settings()
     return settings
 end
 
+--- PocketBook native-player scan directory. The stock audiobook player scans
+-- here, so writing downloads into it gives free native-player fallback playback.
+-- USB-mounted view: /Volumes/PB700K3/Audio Books .
+local NATIVE_PLAYER_DIR = "/mnt/ext1/Audio Books"
+
+--- Dir-existence check (injectable for tests; default lfs-based).
+-- Kept as a module field so tests can stub it without touching the filesystem.
+config._exists_dir = function(path)
+    local lfs_ok, lfs = pcall(require, "lfs")
+    if not lfs_ok then lfs = _G.lfs end
+    if not lfs then return false end
+    return lfs.attributes(path, "mode") == "directory"
+end
+
 --- Persistent default download directory.
--- Uses the KOReader data dir (persistent + writable + USB-visible on devices).
--- NEVER falls back to /tmp: on PocketBook /tmp is not exposed via USB mass
--- storage and may be tmpfs (gone after reboot), so a /tmp default silently
--- strands downloads where the user cannot find them. Resolved lazily so a
--- missing method on one DataStorage build degrades to another.
+-- Prefers the PocketBook native-player directory (/mnt/ext1/Audio Books) when
+-- it exists, so downloads are picked up by the stock audiobook player too
+-- (free fallback playback + USB/Finder-visible). Otherwise falls back to a
+-- subfolder of the persistent KOReader data dir. NEVER falls back to /tmp:
+-- on PocketBook /tmp is not exposed via USB mass storage and may be tmpfs
+-- (gone after reboot), so a /tmp default silently strands downloads.
 -- @return string absolute directory path
 function config.default_download_dir()
+    if config._exists_dir(NATIVE_PLAYER_DIR) then
+        return NATIVE_PLAYER_DIR
+    end
     if DataStorage.getFullDataDir then
         return DataStorage:getFullDataDir() .. "/absaudio_books"
     elseif DataStorage.getDataDir then

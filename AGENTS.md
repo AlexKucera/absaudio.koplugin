@@ -25,7 +25,7 @@
 - **Never use `scheduleIn(0, fn)` for pump loops** — `UIManager:handleInput()` drains ALL due tasks in a `repeat…until` loop before processing input events. `scheduleIn(0)` makes tasks "due now" (`time.now() + 0`), so each pump reschedules itself as immediately due, starving the event loop of input. Cancel taps, gestures, and key events are queued but never dispatched. Use `scheduleIn(0.05, fn)` (50ms) instead — the drain loop exits, input is processed, and ~20 pumps/sec is plenty for progress UI. (source: cancel-download-hang fix)
 - Use `UIManager:setDirty(widget, "full")` after widget swaps — e-ink default `"fast"` mode leaves stale framebuffer content (source: `docs/devlog/20260609-issue04-library-browser-search-partial-repaint-fix_log.md`)
 - **Use `setDirty(widget, "partial")` for high-frequency periodic repaints** (e.g. playback progress ticks); reserve `"full"` for widget swaps/transitions. `"full"` = a full black-then-white e-ink refresh = ugly flashing when called every 0.5s. `"partial"` repaints without the flash, matching the native audiobook player. (source: `docs/devlog/20260614-fix-playback-ui-full-screen-flash_log.md`)
-- **Never silently default `download_dir` to `/tmp`** — on PocketBook `/tmp` is not exposed via USB mass storage and may be tmpfs (gone after reboot), so downloads vanish from the user's view. Use `config.get_download_dir()` (persistent `default_download_dir()` under `DataStorage:getFullDataDir()/absaudio_books`). (source: `docs/devlog/20260614-fix-download-dir-tmp-fallback_log.md`)
+- **Never silently default `download_dir` to `/tmp`** — on PocketBook `/tmp` is not exposed via USB mass storage and may be tmpfs (gone after reboot), so downloads vanish from the user's view. Use `config.get_download_dir()`: prefers the PocketBook native-player dir (`/mnt/ext1/Audio Books`, scanned by the stock audiobook player → free fallback playback) when it exists, else `<koreader_data>/absaudio_books`. Never `/tmp`. (source: `docs/devlog/20260614-fix-download-dir-tmp-fallback_log.md`)
 - **TextWidget caches its rendered bitmap** — changing `.text` alone won't update the display. Call `:free()` after setting new text to invalidate the cache before `setDirty`. (source: `docs/devlog/20260614-fix-playback-ui-not-updating_log.md`)
 - Registering `ges_events.Swipe` intercepts ALL swipes — don't register it on widgets with ScrollableContainer children (source: `docs/devlog/20260608-issue04-library-browser-scrolling-pagination-fix_log.md`)
 
@@ -111,7 +111,7 @@ They capture what was done, decisions & rationale, gotchas & fixes, and next ste
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **absaudio.koplugin** (747 symbols, 762 relationships, 0 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **absaudio.koplugin** (759 symbols, 774 relationships, 0 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

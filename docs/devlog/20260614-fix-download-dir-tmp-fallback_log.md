@@ -6,12 +6,12 @@
 
 ## Goal
 
-On the PB700K3, a downloaded audiobook was reported complete but was **not findable** via Finder. Diagnosis (on-device probe) showed the file landed at `/tmp/audiobooks/…` even though the user had since set `download_dir = /mnt/ext1/audiobooks` in settings. Root cause: `downloader.lua` fell back to `"/tmp/audiobooks"` whenever `download_dir` was unset — which it was at download time. On PocketBook `/tmp` is not exposed via USB mass storage and may be tmpfs (gone after reboot), so downloads vanished from the user's view. Eliminate the silent `/tmp` fallback; use a persistent KOReader data dir instead.
+On the PB700K3, a downloaded audiobook was reported complete but was **not findable** via Finder. Diagnosis (on-device probe) showed the file landed at `/tmp/audiobooks/…` even though the user had since set `download_dir = /mnt/ext1/audiobooks` in settings. Root cause: `downloader.lua` fell back to `"/tmp/audiobooks"` whenever `download_dir` was unset — which it was at download time. On PocketBook `/tmp` is not exposed via USB mass storage and may be tmpfs (gone after reboot), so downloads vanished from the user's view. Eliminate the silent `/tmp` fallback; use a persistent KOReader data dir instead. The default also prefers the PocketBook native-player directory (`/mnt/ext1/Audio Books`) when it exists, so the stock audiobook player picks up downloads too — giving free native-player fallback playback + USB/Finder visibility.
 
 ## What Was Done
 
 - **`config.lua` — two new functions:**
-  - `config.default_download_dir()` → `<koreader_data_dir>/absaudio_books` (resolves via `DataStorage:getFullDataDir()`, falling back to `getDataDir()` then `getSettingsDir()`). Persistent, writable, USB-visible. **Never `/tmp`.**
+  - `config.default_download_dir()` → prefers **`/mnt/ext1/Audio Books`** (the PocketBook native-player scan dir, USB-visible as `/Volumes/PB700K3/Audio Books`) when it exists; otherwise `<koreader_data_dir>/absaudio_books` (resolves via `DataStorage:getFullDataDir()`, falling back to `getDataDir()` then `getSettingsDir()`). Persistent, writable, USB-visible. **Never `/tmp`.** Dir-existence is checked via the injectable `config._exists_dir` (lfs-based default) so tests can stub it without touching the filesystem.
   - `config.get_download_dir()` → returns the configured value when set & non-empty, otherwise the persistent default (does not persist it — the settings UI / caller decides).
 - **`absaudio/downloader.lua` — removed the `/tmp` fallback** at both call sites (`prepare_download` and `prepare_ebook_download`): `config.get("download_dir") or "/tmp/audiobooks"` → `config.get_download_dir()`.
 - **`main.lua` — settings dialog pre-fill:** the "Download Directory" field now defaults to `config.default_download_dir()` when unset, so the user is shown the persistent location as a suggested value (the "prompt").
