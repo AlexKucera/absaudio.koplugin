@@ -22,6 +22,9 @@ package.loaded["datastorage"] = {
     getSettingsDir = function()
         return "/tmp/koreader-test/settings"
     end,
+    getFullDataDir = function()
+        return "/tmp/koreader-test/data"
+    end,
 }
 
 -- Stub util
@@ -185,6 +188,36 @@ run_test("validate_server_url strips trailing slash", function()
 
     config.set("server", "https://abs.example.com/")
     mock.assert_equals(config.get("server"), "https://abs.example.com", "trailing slash should be stripped")
+end)
+
+-- ============================================================
+-- Download directory resolution (persistent default, no /tmp fallback)
+-- ============================================================
+
+run_test("default_download_dir returns persistent KOReader data dir (never /tmp)", function()
+    mock_settings = mock.create_lua_settings({})
+    config.init()
+    local dir = config.default_download_dir()
+    mock.assert_equals(dir, "/tmp/koreader-test/data/absaudio_books", "should be under KOReader data dir")
+    mock.assert_equals(dir:match("/tmp/audiobooks") == nil, true, "must NEVER use the ephemeral /tmp/audiobooks fallback")
+end)
+
+run_test("get_download_dir returns configured value when set", function()
+    mock_settings = mock.create_lua_settings({ download_dir = "/mnt/ext1/audiobooks" })
+    config.init()
+    mock.assert_equals(config.get_download_dir(), "/mnt/ext1/audiobooks", "configured value wins")
+end)
+
+run_test("get_download_dir returns persistent default when unset", function()
+    mock_settings = mock.create_lua_settings({})
+    config.init()
+    mock.assert_equals(config.get_download_dir(), "/tmp/koreader-test/data/absaudio_books", "unset -> persistent default")
+end)
+
+run_test("get_download_dir falls back to default for empty/whitespace value", function()
+    mock_settings = mock.create_lua_settings({ download_dir = "   " })
+    config.init()
+    mock.assert_equals(config.get_download_dir(), "/tmp/koreader-test/data/absaudio_books", "whitespace -> default, never /tmp")
 end)
 
 -- ============================================================

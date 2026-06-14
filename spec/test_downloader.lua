@@ -293,6 +293,7 @@ run_test("prepare_download creates manifest entry with filtered audio files", fu
             if key == "preferred_format" then return "m4b" end
             return nil
         end,
+        get_download_dir = function() return "/tmp/audiobooks" end,
     }
 
     local item = {
@@ -326,7 +327,7 @@ run_test("prepare_download returns error when book already downloaded", function
         getBook = function() return { id = "li_test1" } end,
         isDownloaded = function() return true end,
     }
-    local mock_config = { get = function() return "/tmp" end }
+    local mock_config = { get = function() return "/tmp" end, get_download_dir = function() return "/tmp" end }
 
     local item = { id = "li_test1", media = { metadata = {} } }
     local ok, err = downloader.prepare_download(item, mock_manifest, mock_config)
@@ -340,7 +341,7 @@ run_test("prepare_download returns error when no audio files", function()
         addBook = function() end,
         isDownloaded = function() return false end,
     }
-    local mock_config = { get = function() return "/tmp" end }
+    local mock_config = { get = function() return "/tmp" end, get_download_dir = function() return "/tmp" end }
 
     local item = { id = "li_test1", media = { metadata = { title = "No Audio" }, audioFiles = {} } }
     local ok, err = downloader.prepare_download(item, mock_manifest, mock_config)
@@ -361,6 +362,7 @@ run_test("prepare_download sanitizes directory name", function()
             if key == "preferred_format" then return "m4b" end
             return nil
         end,
+        get_download_dir = function() return "/tmp/audiobooks" end,
     }
 
     local item = {
@@ -510,6 +512,7 @@ run_test("prepare_ebook_download creates manifest entry for ebook", function()
             if key == "download_dir" then return "/tmp/audiobooks" end
             return nil
         end,
+        get_download_dir = function() return "/tmp/audiobooks" end,
     }
 
     local item = {
@@ -536,7 +539,7 @@ run_test("prepare_ebook_download returns error when no ebooks", function()
         getBook = function() return nil end,
         addBook = function() end,
     }
-    local mock_config = { get = function() return "/tmp" end }
+    local mock_config = { get = function() return "/tmp" end, get_download_dir = function() return "/tmp" end }
 
     local item = {
         id = "li_noebook",
@@ -1609,6 +1612,7 @@ run_test("prepare_download resets partial files to pending (resume bug)", functi
             if key == "preferred_format" then return "m4b" end
             return nil
         end,
+        get_download_dir = function() return "/tmp" end,
     }
 
     local item = {
@@ -1792,6 +1796,7 @@ run_test("E2E resume: cancel then resume preserves partial status", function()
             if key == "preferred_format" then return "m4b" end
             return nil
         end,
+        get_download_dir = function() return "/tmp" end,
     }
 
     -- Step 1: First download (prepare_download creates entry)
@@ -1871,6 +1876,7 @@ run_test("prepare_ebook_download merges into existing audio manifest entry", fun
             if key == "preferred_format" then return "m4b" end
             return nil
         end,
+        get_download_dir = function() return "/tmp/audiobooks" end,
     }
 
     -- Step 1: Download audiobook first
@@ -1943,6 +1949,7 @@ run_test("cancel ebook download preserves audio complete status", function()
             if key == "preferred_format" then return "m4b" end
             return nil
         end,
+        get_download_dir = function() return "/tmp/audiobooks" end,
     }
 
     -- Step 1: Download audiobook first
@@ -2010,6 +2017,7 @@ run_test("prepare_download merges audio into existing ebook-only entry", functio
             if key == "preferred_format" then return "m4b" end
             return nil
         end,
+        get_download_dir = function() return "/tmp/audiobooks" end,
     }
 
     -- Step 1: Download ebook first

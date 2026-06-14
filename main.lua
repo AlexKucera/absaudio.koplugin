@@ -100,6 +100,17 @@ function ABSAudio:addToMainMenu(menu_items)
                     self:onShowSettings()
                 end,
             },
+            {
+                -- TEMPORARY diagnostic: detection-only audio capability probe.
+                -- Writes report to /mnt/ext1/absaudio_probe_report.txt and
+                -- shows a summary. No sound emitted (amplifier-safe).
+                -- Remove once the playback backend is chosen.
+                text = _("Audio diagnostics (probe)"),
+                keep_menu_open = false,
+                callback = function()
+                    self:onRunAudioProbe()
+                end,
+            },
         },
     }
 end
@@ -201,7 +212,7 @@ function ABSAudio:onShowSettings()
             },
             {
                 description = _("Download Directory"),
-                text = config.get("download_dir") or "",
+                text = config.get("download_dir") or config.default_download_dir(),
                 hint = "/mnt/ext1/audiobooks",
             },
             {
@@ -337,6 +348,21 @@ function ABSAudio:onExportDiagnostics()
     UIManager:show(InfoMessage:new{
         text = _("Export Diagnostics will be available in a future update."),
         timeout = 3,
+    })
+end
+
+-- TEMPORARY diagnostic handler: runs the detection-only audio probe and
+-- shows a short summary. Report is written to /mnt/ext1/absaudio_probe_report.txt.
+function ABSAudio:onRunAudioProbe()
+    local probe = require("absaudio/audio_probe")
+    local report = probe.run()
+    -- Pull just the SUMMARY section for the on-screen message so it stays readable.
+    local summary = report:match("(==== 7%..*)") or report
+    -- Truncate to a sane length for the InfoMessage dialog.
+    if #summary > 800 then summary = summary:sub(1, 800) .. "\n…(see report file)" end
+    UIManager:show(InfoMessage:new{
+        text = summary .. "\n\nReport: /mnt/ext1/absaudio_probe_report.txt",
+        timeout = 0,
     })
 end
 

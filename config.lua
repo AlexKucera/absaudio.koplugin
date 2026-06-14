@@ -89,4 +89,36 @@ function config.get_settings()
     return settings
 end
 
+--- Persistent default download directory.
+-- Uses the KOReader data dir (persistent + writable + USB-visible on devices).
+-- NEVER falls back to /tmp: on PocketBook /tmp is not exposed via USB mass
+-- storage and may be tmpfs (gone after reboot), so a /tmp default silently
+-- strands downloads where the user cannot find them. Resolved lazily so a
+-- missing method on one DataStorage build degrades to another.
+-- @return string absolute directory path
+function config.default_download_dir()
+    if DataStorage.getFullDataDir then
+        return DataStorage:getFullDataDir() .. "/absaudio_books"
+    elseif DataStorage.getDataDir then
+        return DataStorage:getDataDir() .. "/absaudio_books"
+    end
+    return DataStorage:getSettingsDir() .. "/absaudio_books"
+end
+
+--- Resolve the effective download directory.
+-- Returns the configured value when set and non-empty, otherwise the
+-- persistent default (without persisting it — the caller or settings UI
+-- decides whether to save). Replaces the old `config.get("download_dir")
+-- or "/tmp/audiobooks"` silent-fallback pattern.
+-- @return string absolute directory path
+function config.get_download_dir()
+    if settings then
+        local dir = settings:readSetting("download_dir")
+        if dir and type(dir) == "string" and dir:match("%S") then
+            return dir
+        end
+    end
+    return config.default_download_dir()
+end
+
 return config

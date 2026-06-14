@@ -213,7 +213,7 @@ function downloader.prepare_download(item, manifest, config)
     -- No existing entry — create fresh audio manifest entry
     local title = (item.media and item.media.metadata and item.media.metadata.title) or "Unknown Title"
     local author = (item.media and item.media.metadata and item.media.metadata.authorName) or "Unknown Author"
-    local download_dir = config.get("download_dir") or "/tmp/audiobooks"
+    local download_dir = config.get_download_dir()
     local dir_name = downloader.sanitize_filename(author .. "_" .. title)
     local local_dir = download_dir .. "/" .. dir_name
 
@@ -386,7 +386,7 @@ function downloader.prepare_ebook_download(item, manifest, config)
     -- No existing entry — create fresh ebook-only manifest entry
     local title = (item.media and item.media.metadata and item.media.metadata.title) or "Unknown Title"
     local author = (item.media and item.media.metadata and item.media.metadata.authorName) or "Unknown Author"
-    local download_dir = config.get("download_dir") or "/tmp/audiobooks"
+    local download_dir = config.get_download_dir()
     local dir_name = downloader.sanitize_filename(author .. "_" .. title)
     local local_dir = download_dir .. "/" .. dir_name
 

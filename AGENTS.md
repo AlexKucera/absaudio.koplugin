@@ -25,6 +25,7 @@
 - **Never use `scheduleIn(0, fn)` for pump loops** — `UIManager:handleInput()` drains ALL due tasks in a `repeat…until` loop before processing input events. `scheduleIn(0)` makes tasks "due now" (`time.now() + 0`), so each pump reschedules itself as immediately due, starving the event loop of input. Cancel taps, gestures, and key events are queued but never dispatched. Use `scheduleIn(0.05, fn)` (50ms) instead — the drain loop exits, input is processed, and ~20 pumps/sec is plenty for progress UI. (source: cancel-download-hang fix)
 - Use `UIManager:setDirty(widget, "full")` after widget swaps — e-ink default `"fast"` mode leaves stale framebuffer content (source: `docs/devlog/20260609-issue04-library-browser-search-partial-repaint-fix_log.md`)
 - **Use `setDirty(widget, "partial")` for high-frequency periodic repaints** (e.g. playback progress ticks); reserve `"full"` for widget swaps/transitions. `"full"` = a full black-then-white e-ink refresh = ugly flashing when called every 0.5s. `"partial"` repaints without the flash, matching the native audiobook player. (source: `docs/devlog/20260614-fix-playback-ui-full-screen-flash_log.md`)
+- **Never silently default `download_dir` to `/tmp`** — on PocketBook `/tmp` is not exposed via USB mass storage and may be tmpfs (gone after reboot), so downloads vanish from the user's view. Use `config.get_download_dir()` (persistent `default_download_dir()` under `DataStorage:getFullDataDir()/absaudio_books`). (source: `docs/devlog/20260614-fix-download-dir-tmp-fallback_log.md`)
 - **TextWidget caches its rendered bitmap** — changing `.text` alone won't update the display. Call `:free()` after setting new text to invalidate the cache before `setDirty`. (source: `docs/devlog/20260614-fix-playback-ui-not-updating_log.md`)
 - Registering `ges_events.Swipe` intercepts ALL swipes — don't register it on widgets with ScrollableContainer children (source: `docs/devlog/20260608-issue04-library-browser-scrolling-pagination-fix_log.md`)
 
@@ -58,6 +59,7 @@ They capture what was done, decisions & rationale, gotchas & fixes, and next ste
 | 2026-06-14 | issue | [issue07-chapter-navigation-skip-controls-speed-control_log.md](docs/devlog/20260614-issue07-chapter-navigation-skip-controls-speed-control_log.md) | Issue #7/Slice 6: new `chapter_navigator.lua` pure module (current/next/previous/chapter_start, smart-restart prev); speed `next_speed`/`format_speed` in player; chapter name widget + ⏮/⏭/speed-badge row + seek-to-chapter in book_detail; persisted speed (config default 1×); 44 new tests (30 navigator, +4 player, +2 config, +8 book_detail) |
 | 2026-06-14 | issue | [fix-playback-ui-not-updating_log.md](docs/devlog/20260614-fix-playback-ui-not-updating_log.md) | Fixed frozen playback UI: stub backend now uses real-time wall clock for emulator (was frozen virtual clock); added play/pause icon toggle; 4 new tests; 43 book_detail + 75 player pass |
 | 2026-06-14 | generic | [fix-playback-ui-full-screen-flash_log.md](docs/devlog/20260614-fix-playback-ui-full-screen-flash_log.md) | Playback UI full-screen e-ink flash every 0.5s; changed `setDirty(target, "full")` → `"partial"` in `_updatePlaybackDisplay()`; reserve `"full"` for widget swaps; 51 book_detail / 366 total pass
+| 2026-06-14 | generic | [fix-download-dir-tmp-fallback_log.md](docs/devlog/20260614-fix-download-dir-tmp-fallback_log.md) | Removed silent `/tmp/audiobooks` fallback in downloader; added `config.default_download_dir()`/`get_download_dir()` (persistent KOReader data dir); pre-fill Settings field; +4 config tests; 18 config + 82 downloader pass
 | 2026-06-09 | issue | [issue17-dashboard-data-render-split_log.md](docs/devlog/20260609-issue17-dashboard-data-render-split_log.md) | Extracted `dashboard.prepare()` from `show()`; 4 new tests; 166 total pass |
 | 2026-06-09 | issue | [issue18-book-detail-data-render-split_log.md](docs/devlog/20260609-issue18-book-detail-data-render-split_log.md) | Extracted `detail.prepare()` from `show()`; 4 new tests; 172 total pass |
 | 2026-06-09 | issue | [issue20-main-lua-navigator-tests_log.md](docs/devlog/20260609-issue20-main-lua-navigator-tests_log.md) | Created `spec/test_main.lua` with 10 tests; navigator registration, onOpenDashboard wiring, dispatcher routing, first-run behavior; 196 total pass |
@@ -109,24 +111,24 @@ They capture what was done, decisions & rationale, gotchas & fixes, and next ste
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **absaudio.koplugin** (728 symbols, 741 relationships, 0 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **absaudio.koplugin** (747 symbols, 762 relationships, 0 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
-> Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
+> If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
 ## Always Do
 
-- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
-- **MUST run `detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows. For regression review, compare against the default branch: `detect_changes({scope: "compare", base_ref: "main"})`.
+- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `gitnexus_impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
+- **MUST run `gitnexus_detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows.
 - **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
-- When exploring unfamiliar code, use `query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
-- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `context({name: "symbolName"})`.
+- When exploring unfamiliar code, use `gitnexus_query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
+- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `gitnexus_context({name: "symbolName"})`.
 
 ## Never Do
 
-- NEVER edit a function, class, or method without first running `impact` on it.
+- NEVER edit a function, class, or method without first running `gitnexus_impact` on it.
 - NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
-- NEVER rename symbols with find-and-replace — use `rename` which understands the call graph.
-- NEVER commit changes without running `detect_changes()` to check affected scope.
+- NEVER rename symbols with find-and-replace — use `gitnexus_rename` which understands the call graph.
+- NEVER commit changes without running `gitnexus_detect_changes()` to check affected scope.
 
 ## Resources
 
