@@ -11,7 +11,7 @@ Documentation is organized by type into subdirectories. Each subdirectory has a 
 - `adr/` — Architecture Decision Records (numbered, status: accepted/superseded)
 - `devlog/` — Development session logs (one per issue/fix, dated `YYYYMMDD-<slug>.md`)
 - `spec/` — Planning specification (the original project spec)
-- `prd/` — Product requirements document
+- `prd/` — Product requirements documents (`PRD.md` = original full-plugin PRD; `PRD-in-app-audio-ffmpeg.md` = in-app audio playback, path C, supersedes the inkview-FFI playback assumption)
 - `session-notes/` — Early session summaries from project inception
 
 Top-level docs:
