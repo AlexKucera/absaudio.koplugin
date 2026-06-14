@@ -20,6 +20,7 @@ local config = {}
 local DEFAULTS = {
     preferred_format = "m4b",
     log_level = "verbose",
+    playback_speed = 1.0,  -- PRD §Playback Speed: default 1×, local-only (not synced to ABS)
 }
 
 -- Internal state

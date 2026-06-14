@@ -63,6 +63,19 @@ run_test("new config returns correct default values", function()
     mock.assert_equals(config.get("download_dir"), nil, "download_dir should be nil when not set")
 end)
 
+run_test("new config returns default playback_speed", function()
+    mock_settings = mock.create_lua_settings({})
+    config.init()
+    mock.assert_equals(config.get("playback_speed"), 1.0, "default playback_speed should be 1.0")
+end)
+
+run_test("playback_speed round-trips and persists", function()
+    mock_settings = mock.create_lua_settings({})
+    config.init()
+    config.set("playback_speed", 1.5)
+    mock.assert_equals(config.get("playback_speed"), 1.5, "set then get round-trip")
+end)
+
 run_test("config path uses LuaSettings under KOReader settings dir", function()
     mock_settings = mock.create_lua_settings({})
 

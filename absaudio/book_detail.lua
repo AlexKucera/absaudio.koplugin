@@ -51,6 +51,7 @@ local has_downloader, downloader = pcall(require, "absaudio/downloader")
 local has_config, config = pcall(require, "config")
 local has_progress, progress = pcall(require, "absaudio/download_progress")
 local has_player, player = pcall(require, "absaudio/player")
+local chapter_navigator = require("absaudio/chapter_navigator")
 local ConfirmBox = require("ui/widget/confirmbox")
 
 local detail = {}
@@ -381,6 +382,13 @@ function BookDetailView:_initPlayer()
     if not book then return end
 
     self.player = player.create_from_manifest(book, self.item)
+    -- Apply persisted playback speed (local-only preference; PRD §Playback Speed)
+    if has_config and self.player then
+        local saved_speed = config.get("playback_speed")
+        if saved_speed and self.player.setPlaybackSpeed then
+            self.player:setPlaybackSpeed(saved_speed)
+        end
+    end
 end
 
 ------------------------------------------------------------------------
@@ -390,6 +398,9 @@ end
 ------------------------------------------------------------------------
 function BookDetailView:_addNowPlaying()
     if not self.player then return end
+
+    -- Chapters live on a single global timeline (ABS media.chapters).
+    self.chapters = (self.item.media and self.item.media.chapters) or {}
 
     widget_helpers.addSeparator(self.content_group, self.content_width)
 
@@ -431,6 +442,21 @@ function BookDetailView:_addNowPlaying()
     table.insert(self.content_group, self.progress_bar)
     table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
 
+    -- Current chapter name below the progress bar (US 27)
+    if #self.chapters > 0 then
+        local idx, ch = chapter_navigator.current(self.player:getPosition(), self.chapters)
+        self.chapter_name_widget = TextWidget:new{
+            text = string.format("Chapter %d: %s", idx, (ch and ch.title) or ""),
+            face = Font:getFace("cfont", 14),
+            fgcolor = Blitbuffer.COLOR_DARK_GRAY,
+        }
+        table.insert(self.content_group, CenterContainer:new{
+            dimen = Geom:new{ w = self.content_width, h = 20 },
+            self.chapter_name_widget,
+        })
+        table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
+    end
+
     -- Skip back / Time / Skip forward row
     local skip_row = HorizontalGroup:new{}
 
@@ -467,6 +493,60 @@ function BookDetailView:_addNowPlaying()
     table.insert(skip_row, skip_fwd_btn)
 
     table.insert(self.content_group, skip_row)
+    table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
+
+    -- Playback speed button (cycles presets on tap; badge shows current speed)
+    local speed_btn = widget_helpers.makeTappableButton(
+        player.format_speed(self.player:getPlaybackSpeed()), function()
+            self.detail_ref:_onSpeedCycle()
+        end, {
+            face = Font:getFace("cfont", 18),
+            fgcolor = Blitbuffer.COLOR_BLUE,
+            tap_event_name = "TapSpeedCycle",
+        })
+    speed_btn.detail_ref = self.detail_ref
+    self.speed_btn = speed_btn  -- ref for badge updates
+
+    -- Chapter skip (⏮/⏭) flanking the speed badge (US 29); when there are
+    -- no chapters, the speed button is shown centered on its own.
+    if #self.chapters > 0 then
+        local nav_row = HorizontalGroup:new{}
+
+        local ch_prev_btn = widget_helpers.makeTappableButton("⏮", function()
+            self.detail_ref:_onChapterPrev()
+        end, {
+            face = Font:getFace("cfont", 20),
+            fgcolor = Blitbuffer.COLOR_DARK_GRAY,
+            width = 80,
+            tap_event_name = "TapChapterPrev",
+        })
+        ch_prev_btn.detail_ref = self.detail_ref
+        table.insert(nav_row, ch_prev_btn)
+
+        -- Speed badge centered in the middle space
+        table.insert(nav_row, CenterContainer:new{
+            dimen = Geom:new{ w = math.max(self.content_width - 160, 80), h = 20 },
+            speed_btn,
+        })
+
+        local ch_next_btn = widget_helpers.makeTappableButton("⏭", function()
+            self.detail_ref:_onChapterNext()
+        end, {
+            face = Font:getFace("cfont", 20),
+            fgcolor = Blitbuffer.COLOR_DARK_GRAY,
+            width = 80,
+            tap_event_name = "TapChapterNext",
+        })
+        ch_next_btn.detail_ref = self.detail_ref
+        table.insert(nav_row, ch_next_btn)
+
+        table.insert(self.content_group, nav_row)
+    else
+        table.insert(self.content_group, CenterContainer:new{
+            dimen = Geom:new{ w = self.content_width, h = 20 },
+            speed_btn,
+        })
+    end
     table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.small })
 end
 
@@ -510,6 +590,61 @@ function BookDetailView:_onSeekProgress(position)
     self:_updatePlaybackDisplay()
 end
 
+------------------------------------------------------------------------
+-- Chapter navigation (US 28, US 29) + playback speed (US 30).
+-- All pure-logic via chapter_navigator / player.next_speed.
+------------------------------------------------------------------------
+
+-- Seek to the start of the previous chapter (smart restart: if deep in
+-- the current chapter, restarts it instead; clamps to the first).
+function BookDetailView:_onChapterPrev()
+    if not self.player then return end
+    if not self.chapters or #self.chapters == 0 then return end
+
+    local idx = chapter_navigator.previous(self.player:getPosition(), self.chapters)
+    if idx then self:_onSeekToChapter(idx) end
+end
+
+-- Seek to the start of the next chapter (no-op at the last chapter).
+function BookDetailView:_onChapterNext()
+    if not self.player then return end
+    if not self.chapters or #self.chapters == 0 then return end
+
+    local idx = chapter_navigator.next(self.player:getPosition(), self.chapters)
+    if idx then self:_onSeekToChapter(idx) end
+end
+
+-- Tap-to-cycle playback speed; persists the preference locally (not synced).
+function BookDetailView:_onSpeedCycle()
+    if not self.player then return end
+
+    local new_speed = player.next_speed(self.player:getPlaybackSpeed())
+    self.player:setPlaybackSpeed(new_speed)
+
+    -- Persist locally (PRD: speed preference is not synced to ABS)
+    if has_config then
+        config.set("playback_speed", new_speed)
+        local settings = config.get_settings()
+        if settings and settings.flush then settings:flush() end
+    end
+
+    -- Update the speed badge immediately (TextWidget caches its bitmap)
+    if self.speed_btn and self.speed_btn[1] then
+        self.speed_btn[1].text = player.format_speed(new_speed)
+        self.speed_btn[1]:free()
+    end
+    self:_updatePlaybackDisplay()
+end
+
+-- Seek to a specific chapter's start (tapped from the chapter list).
+function BookDetailView:_onSeekToChapter(chapter_idx)
+    if not self.player then return end
+    if not self.chapters or #self.chapters == 0 then return end
+
+    self.player:setPosition(chapter_navigator.chapter_start(chapter_idx, self.chapters))
+    self:_updatePlaybackDisplay()
+end
+
 -- Update progress bar and time display to reflect current player state
 function BookDetailView:_updatePlaybackDisplay()
     if not self.player then return end
@@ -531,6 +666,16 @@ function BookDetailView:_updatePlaybackDisplay()
         if self.play_btn[1].text ~= icon then
             self.play_btn[1].text = icon
             self.play_btn[1]:free()
+        end
+    end
+
+    -- Refresh current-chapter label below the progress bar (US 27)
+    if self.chapter_name_widget and self.chapters and #self.chapters > 0 then
+        local idx, ch = chapter_navigator.current(pos, self.chapters)
+        local label = string.format("Chapter %d: %s", idx, (ch and ch.title) or "")
+        if self.chapter_name_widget.text ~= label then
+            self.chapter_name_widget.text = label
+            self.chapter_name_widget:free()
         end
     end
 
@@ -1072,15 +1217,8 @@ function BookDetailView:_addChapters(chapters)
         tap_container.chapter = chapter
         tap_container.chapter_idx = i
         function tap_container:onTapChapter()
-            -- Stub: chapter tap will seek playback in a future slice
-            abs_logger.verbose("Chapter tapped: " .. (self.chapter.title or "untitled")
-                .. " at " .. tostring(self.chapter.start) .. "s")
-            UIManager:show(InfoMessage:new{
-                text = string.format(_("Chapter: %s\nStart: %s"),
-                    self.chapter.title or _("Untitled"),
-                    widget_helpers.format_time(self.chapter.start)),
-                timeout = 2,
-            })
+            -- Seek playback to this chapter's start position (US 28)
+            self.detail_ref:_onSeekToChapter(self.chapter_idx)
             return true
         end
         tap_container[1] = chapter_widget

@@ -1048,6 +1048,38 @@ run_test("m3u: empty file_paths returns nil playlist", function()
     mock.assert_equals(backend:_buildPlaylist(), nil, "nil for empty paths")
 end)
 
+-- ============================================================
+-- Slice 11: Playback speed presets (cycle + format)
+-- Presets: 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2 (PRD §Playback Speed).
+-- ============================================================
+
+run_test("next_speed: cycles through all presets and wraps", function()
+    mock.assert_equals(player.next_speed(0.5), 0.75, "0.5 → 0.75")
+    mock.assert_equals(player.next_speed(0.75), 1.0, "0.75 → 1")
+    mock.assert_equals(player.next_speed(1.0), 1.25, "1 → 1.25")
+    mock.assert_equals(player.next_speed(1.25), 1.5, "1.25 → 1.5")
+    mock.assert_equals(player.next_speed(1.5), 1.75, "1.5 → 1.75")
+    mock.assert_equals(player.next_speed(1.75), 2.0, "1.75 → 2")
+    mock.assert_equals(player.next_speed(2.0), 0.5, "2 wraps to 0.5")
+end)
+
+run_test("next_speed: unknown/nil input → 1.25 (treat as 1× base)", function()
+    mock.assert_equals(player.next_speed(nil), 1.25, "nil treated as 1× → 1.25")
+    mock.assert_equals(player.next_speed(1.33), 1.25, "unknown normalized to base → 1.25")
+end)
+
+run_test("format_speed: renders presets without trailing zero", function()
+    mock.assert_equals(player.format_speed(1.0), "1×", "1× not 1.0×")
+    mock.assert_equals(player.format_speed(2.0), "2×", "2× not 2.0×")
+    mock.assert_equals(player.format_speed(1.5), "1.5×", "1.5×")
+    mock.assert_equals(player.format_speed(0.75), "0.75×", "0.75×")
+    mock.assert_equals(player.format_speed(1.25), "1.25×", "1.25×")
+end)
+
+run_test("format_speed: nil → '1×' default badge", function()
+    mock.assert_equals(player.format_speed(nil), "1×", "nil falls back to 1×")
+end)
+
 -- Summary
 
 print(string.format("\n%d passed, %d failed", passed, failed))

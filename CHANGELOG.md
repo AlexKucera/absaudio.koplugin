@@ -12,6 +12,8 @@ All notable changes to this project will be documented in this file. The format 
 - **api:** add `downloadFile` endpoint with Range header support for resuming partial downloads
 - **detail:** add Open Ebook button to open downloaded ebooks in KOReader ReaderUI; fix ebook section rendering when viewing downloaded books offline
 - **player:** implement playback engine with seekable progress bar, dynamic time display, stub/inkview backend strategy pattern, and m3u playlist generation; closes #6
+- **chapters:** add chapter navigator — new pure-logic `chapter_navigator.lua` module mapping a global playback position to ABS chapters (`current`/`next`/`previous`/`chapter_start`), with smart-restart prev behavior (deep-in-chapter restarts current, near-start jumps to previous) and half-open `[start,end)` boundary handling (a position at a boundary belongs to the later chapter)
+- **player:** add chapter name display below the progress bar, next/prev (⏮/⏭) chapter skip buttons, tappable chapter list seek-to-start, and tap-to-cycle playback speed control (0.5×–2×) with current-speed badge and local-only persistence (default 1×); closes #7
 ### fix
 
 - **book-detail:** fix playback UI not updating — play button tap did nothing (bare `GestureRange` not array-wrapped for `InputContainer`), progress bar was invisible (missing `paintTo`), and position was frozen (stub backend's virtual clock only advanced via test-only `_advanceTime`, never called in production); stub backend now uses real-time wall clock by default with `_advanceTime` switching to manual mode for tests. Also add play/pause icon toggle (▶ ↔ ⏸) and TextWidget `:free()` cache invalidation on state changes.

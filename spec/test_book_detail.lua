@@ -129,11 +129,17 @@ package.loaded["abs_logger"] = {
 }
 
 -- Mock config
+local mock_playback_speed = 1.0
 package.loaded["config"] = {
     get = function(key)
         if key == "preferred_format" then return "m4b" end
+        if key == "playback_speed" then return mock_playback_speed end
         return nil
     end,
+    set = function(key, value)
+        if key == "playback_speed" then mock_playback_speed = value end
+    end,
+    get_settings = function() return { flush = function() end } end,
 }
 
 -- Mock error_handler — tracks calls for assertions
@@ -1872,6 +1878,96 @@ run_test("regression: _updatePlaybackDisplay calls free() on text widget", funct
 
     mock.assert_equals(view.time_display_widget._bb, nil,
         "TextWidget _bb cache should be nil after free() (forces re-render on next paintTo)")
+end)
+
+-- ============================================================
+-- Chapter navigation + speed control handlers (issue #7)
+-- ============================================================
+
+local NAV_CHAPTERS = {
+    { id = 0, start = 0,    ["end"] = 600,  title = "Intro" },
+    { id = 1, start = 600,  ["end"] = 1500, title = "Chapter 2" },
+    { id = 2, start = 1500, ["end"] = 2400, title = "Chapter 3" },
+}
+
+-- Build a now-playing view backed by a stub player at start_pos, with
+-- chapter data on a 2400s global timeline. Player is in 'stopped' state
+-- so getPosition() is deterministic (no wall-clock drift).
+local function make_chapter_view(start_pos, chapters)
+    local player = require("absaudio/player")
+    local detail = require("absaudio/book_detail")
+    mock_playback_speed = 1.0  -- reset persisted speed so each view starts at default
+    local p = player.create({ track_durations = { 2400 }, start_position = start_pos or 0 })
+    mock_manifest_books = {
+        ["ch_nav_test"] = {
+            id = "ch_nav_test", title = "Ch Nav", local_dir = "/tmp/ch_nav",
+            current_time = start_pos or 0,
+            files = { { filename = "all.m4b", type = "audio", status = "complete" } },
+        },
+    }
+    mock_api_configured = false
+    local item = {
+        id = "ch_nav_test", mediaType = "book",
+        media = { duration = 2400, audioFiles = {{ duration = 2400 }}, chapters = chapters },
+    }
+    local view = detail._renderView(item)
+    view.player = p
+    return view, p
+end
+
+run_test("chapters: chapter name widget reflects current chapter at render", function()
+    local view = make_chapter_view(100, NAV_CHAPTERS)  -- pos 100 → chapter 1
+    mock.assert_equals(view.chapter_name_widget.text, "Chapter 1: Intro",
+        "chapter name widget built with current chapter")
+    mock.assert_equals(view.chapters, NAV_CHAPTERS, "chapters captured on the view")
+end)
+
+run_test("chapter next: seeks to next chapter start and updates label", function()
+    local view, p = make_chapter_view(100, NAV_CHAPTERS)  -- chapter 1
+    view:_onChapterNext()
+    mock.assert_equals(p:getPosition(), 600, "seeked to chapter 2 start (600)")
+    mock.assert_equals(view.chapter_name_widget.text, "Chapter 2: Chapter 2",
+        "label updated after seek")
+end)
+
+run_test("chapter prev: deep in chapter restarts current chapter", function()
+    local view, p = make_chapter_view(800, NAV_CHAPTERS)  -- elapsed 200s in ch2
+    view:_onChapterPrev()
+    mock.assert_equals(p:getPosition(), 600, "restarts chapter 2 (600)")
+end)
+
+run_test("chapter prev: near start jumps to previous chapter", function()
+    local view, p = make_chapter_view(605, NAV_CHAPTERS)  -- elapsed 5s in ch2
+    view:_onChapterPrev()
+    mock.assert_equals(p:getPosition(), 0, "jumps to chapter 1 start (0)")
+end)
+
+run_test("chapter next: no-op at last chapter", function()
+    local view, p = make_chapter_view(2000, NAV_CHAPTERS)  -- chapter 3 (last)
+    view:_onChapterNext()
+    mock.assert_equals(p:getPosition(), 2000, "position unchanged at last chapter")
+end)
+
+run_test("seek-to-chapter: seeks to a specific chapter start", function()
+    local view, p = make_chapter_view(100, NAV_CHAPTERS)
+    view:_onSeekToChapter(3)
+    mock.assert_equals(p:getPosition(), 1500, "seeked to chapter 3 start")
+end)
+
+run_test("speed: cycle advances preset and updates badge", function()
+    local view, p = make_chapter_view(0, NAV_CHAPTERS)  -- default speed 1×
+    mock.assert_equals(view.speed_btn[1].text, "1×", "initial badge is 1×")
+    view:_onSpeedCycle()
+    mock.assert_equals(p:getPlaybackSpeed(), 1.25, "player speed advanced to 1.25")
+    mock.assert_equals(view.speed_btn[1].text, "1.25×", "badge updated to 1.25×")
+end)
+
+run_test("chapter nav: no-op when book has no chapters", function()
+    local view, p = make_chapter_view(100, nil)  -- no chapters
+    view:_onChapterNext()
+    mock.assert_equals(p:getPosition(), 100, "no seek when no chapters")
+    view:_onChapterPrev()
+    mock.assert_equals(p:getPosition(), 100, "no seek when no chapters")
 end)
 
 print(string.format("\n%d passed, %d failed", passed, failed))

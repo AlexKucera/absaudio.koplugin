@@ -99,6 +99,49 @@ function player.track_offset_to_global(track_index, offset, track_durations)
 end
 
 ------------------------------------------------------------------------
+-- Playback speed presets (PRD §Playback Speed Presets).
+-- Tap-to-cycle order: 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2.
+-- Not synced to ABS — a local preference only.
+------------------------------------------------------------------------
+local SPEED_PRESETS = { 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0 }
+
+------------------------------------------------------------------------
+-- Next speed in the preset cycle, wrapping back to the first.
+-- Unknown/nil input is treated as 1× (the default), so the next tap
+-- yields 1.25×.
+--
+-- @param speed number|nil  current speed multiplier
+-- @return number  next preset
+------------------------------------------------------------------------
+function player.next_speed(speed)
+    local base = 1.0
+    if speed ~= nil then
+        for _, p in ipairs(SPEED_PRESETS) do
+            if p == speed then base = speed break end
+        end
+    end
+
+    for i, p in ipairs(SPEED_PRESETS) do
+        if p == base then
+            return SPEED_PRESETS[i + 1] or SPEED_PRESETS[1]
+        end
+    end
+    return SPEED_PRESETS[3]  -- 1.25 (fallback; base was 1.0)
+end
+
+------------------------------------------------------------------------
+-- Render a speed multiplier as a compact badge label.
+-- 1.0 → "1×", 1.5 → "1.5×", 0.75 → "0.75×". nil → "1×".
+--
+-- @param speed number|nil
+-- @return string
+------------------------------------------------------------------------
+function player.format_speed(speed)
+    if speed == nil then speed = 1.0 end
+    return string.format("%g×", speed)
+end
+
+------------------------------------------------------------------------
 -- Player instance factory
 --
 -- @param opts table  Configuration:

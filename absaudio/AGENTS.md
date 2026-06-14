@@ -40,6 +40,14 @@ Each module is a self-contained Lua file with a clear public API documented in t
 - Shared utilities: `format_duration`, `format_time`, `format_file_size`, `addSeparator`, `makeTappableButton`
 - Extracted from triplicated code across dashboard, library_browser, book_detail
 
+### Pure logic (`chapter_navigator.lua`)
+- Zero-dependency module (no FFI, no KOReader globals, no I/O) — the deepest, most testable module
+- Maps a global playback position (seconds) to ABS chapters (`{ id, start, end, title }` on `media.chapters`, a single global timeline)
+- Public API: `current(pos, chapters)`, `next(pos, chapters)`, `previous(pos, chapters, opts)`, `chapter_start(index, chapters)`
+- Boundary convention: half-open `[start, end)` — a position at a boundary belongs to the LATER chapter; beyond-last clamps to last; empty → `(0, nil)`
+- `previous()` uses smart-restart UX (deep in chapter >`opts.threshold` seconds, default 10 → restart current; near start → previous chapter, clamped to first)
+- Used by `book_detail.lua` for: chapter-name display, tappable chapter list (seek-to-chapter), next/prev skip buttons
+
 ## Work Guidance
 
 - KOReader font names: `cfont`, `tfont`, `smalltfont`, `x_smalltfont`, `largeffont`, `scfont` — use with explicit size: `Font:getFace("tfont", 26)`
