@@ -1403,6 +1403,18 @@ function BookDetailView:_onDownloadBook(item, ebook_only)
                 return
             end
             local still_running = handle:pump()
+            -- [DLDBG] wall-clock timestamp per pump fire (temp diagnostic).
+            -- Cleanup: grep -rn DLDBG. Pattern reveals event-loop starvation:
+            --   ~0.05s gaps  = timers self-driving (NOT suspend)
+            --   burst + multi-sec gap = PocketBook auto-suspend starving pump
+            do
+                local sok, socket = pcall(require, "socket")
+                local now = (sok and socket.gettime and socket.gettime()) or os.time()
+                local _t = type
+                abs_logger.info(string.format(
+                    "[DLDBG] pump fire t=%.3f bytes=%d state_bytes=%s",
+                    now, (file.size or 0), tostring(state.bytes_downloaded)))
+            end
             if has_progress then progress.update(state) end
 
             if still_running then

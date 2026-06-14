@@ -103,22 +103,21 @@ function DashboardView:init()
     -- Store reference for tap callbacks
     self.dashboard_ref = self
 
-    -- Back key closes the dashboard
+    -- Back key closes the dashboard. Bind broadly: Device.input.group.Back
+    -- can be empty on some platforms (PocketBook), so also bind common back
+    -- key names explicitly. (The visible Close button is the reliable path;)
+    -- this is the keyboard shortcut.
     if Device:hasKeys() then
         self.key_events = self.key_events or {}
-        self.key_events.Close = { { Device.input.group.Back } }
+        local back_keys = { "Back" }
+        if Device.input.group.Back then
+            for _, k in ipairs(Device.input.group.Back) do table.insert(back_keys, k) end
+        end
+        self.key_events.Close = { back_keys }
     end
-
-    -- Swipe down closes the dashboard
-    if Device:isTouchDevice() then
-        self.ges_events = self.ges_events or {}
-        self.ges_events.Swipe = {
-            GestureRange:new{
-                ges = "swipe",
-                range = function() return self.dimen end,
-            },
-        }
-    end
+    -- NOTE: no ges_events.Swipe here — registering Swipe on a widget with a
+    -- ScrollableContainer child intercepts ALL swipes and breaks scrolling
+    -- (source: AGENTS.md learnings). Closing is via the Close button + back key.
     local screen_size = Screen:getSize()
     self.dimen = screen_size
     self.screen_width = screen_size.w
@@ -139,6 +138,11 @@ function DashboardView:init()
 
     -- Title
     self:_addTitle()
+
+    -- Visible Close button (always tappable) — the reliable escape from the
+    -- dashboard back to plain KOReader. (source: device-reported UX blocker —
+    -- gesture/back-key close was unreliable on PocketBook.)
+    self:_addCloseButton()
 
     -- Resume Last Book section
     self:_addResumeSection()
@@ -181,23 +185,14 @@ function DashboardView:init()
         self.scrollable,
     }
 
-    -- Handle back key / tap outside
-    if Device:hasKeys() then
-        self.key_events.Close = { { Device.input.group.Back } }
-    end
+    -- (Back-key binding + visible Close button are set up in init(); do not
+    -- rebind here with group.Back only — that would override the robust
+    -- init() binding and drop PocketBook back keys.)
 
-    -- Swipe/pan to scroll is handled by ScrollableContainer
-    -- Tap outside to close
-    self.ges_events.TapClose = {
-        GestureRange:new{
-            ges = "tap",
-            range = Geom:new{
-                x = 0, y = 0,
-                w = self.screen_width,
-                h = self.screen_height,
-            },
-        },
-    }
+    -- Swipe/pan to scroll is handled by ScrollableContainer.
+    -- Closing: visible Close button (init) + back key (init). No full-screen
+    -- TapClose gesture — it has no handler and would intercept content taps
+    -- (book/browse rows). Removed.
 end
 
 function DashboardView:_addTitle()
@@ -594,6 +589,19 @@ function DashboardView:onClose()
     else
         UIManager:close(self)
     end
+end
+
+--- Add a visible, tappable Close button to the content. Always rendered at
+-- the top so the user can reliably return to plain KOReader regardless of
+-- device key/gesture support.
+function DashboardView:_addCloseButton()
+    local button_w = widget_helpers.makeTappableButton(
+        _("✕ Back to Reader"),
+        function() self:onClose() end,
+        { width = self.content_width, face = Font:getFace("cfont", 18) }
+    )
+    table.insert(self.content_group, button_w)
+    table.insert(self.content_group, VerticalSpan:new{ width = Size.padding.default })
 end
 
 function DashboardView:_onSyncNow()

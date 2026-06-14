@@ -101,16 +101,30 @@ function nav.push(name, data)
     _current_data = data
 end
 
---- Pop the stack: close current, re-show previous screen
+--- Pop the stack: close current, re-show previous screen.
+-- When the stack is empty (current screen is the root, e.g. the dashboard
+-- shown via reset()), still close the current widget so the underlying
+-- KOReader (reader/filemanager) is revealed. Previously this was a silent
+-- no-op, which trapped the user inside a fullscreen widget with no escape.
 function nav.pop()
-    if #_stack == 0 then
-        return  -- empty stack, no-op
-    end
-
-    -- Close current widget (may be nil for failed async screens)
+    -- Always close the current widget so the user is never trapped.
     if _current then
         local UIManager = require("ui/uimanager")
         UIManager:close(_current)
+    end
+
+    -- If an async screen was in progress with a deferred-close widget
+    if _deferred_close then
+        _deferred_close = nil
+    end
+
+    -- Empty stack: current was the root screen. Clear nav state and stop —
+    -- closing _current above already revealed the underlying KOReader view.
+    if #_stack == 0 then
+        _current = nil
+        _current_name = nil
+        _current_data = nil
+        return
     end
 
     -- If an async screen was in progress with a deferred-close widget
