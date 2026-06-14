@@ -24,28 +24,33 @@
 - `UIManager:scheduleIn` silently swallows Lua errors — use synchronous `pcall` for critical logic (source: `docs/devlog/20260608-issue04-library-browser-book-detail-view_log.md`)
 - **Never use `scheduleIn(0, fn)` for pump loops** — `UIManager:handleInput()` drains ALL due tasks in a `repeat…until` loop before processing input events. `scheduleIn(0)` makes tasks "due now" (`time.now() + 0`), so each pump reschedules itself as immediately due, starving the event loop of input. Cancel taps, gestures, and key events are queued but never dispatched. Use `scheduleIn(0.05, fn)` (50ms) instead — the drain loop exits, input is processed, and ~20 pumps/sec is plenty for progress UI. (source: cancel-download-hang fix)
 - Use `UIManager:setDirty(widget, "full")` after widget swaps — e-ink default `"fast"` mode leaves stale framebuffer content (source: `docs/devlog/20260609-issue04-library-browser-search-partial-repaint-fix_log.md`)
+- **TextWidget caches its rendered bitmap** — changing `.text` alone won't update the display. Call `:free()` after setting new text to invalidate the cache before `setDirty`. (source: `docs/devlog/20260614-fix-playback-ui-not-updating_log.md`)
 - Registering `ges_events.Swipe` intercepts ALL swipes — don't register it on widgets with ScrollableContainer children (source: `docs/devlog/20260608-issue04-library-browser-scrolling-pagination-fix_log.md`)
 
 ### KOReader UI
 - Valid font names: `cfont`, `tfont`, `smalltfont`, `x_smalltfont`, `largeffont`, `scfont` — use with explicit size: `Font:getFace("tfont", 26)` (source: `docs/devlog/20260608-dashboard-widget-fullscreen-rendering-fixes_log.md`)
 - DPI-scale images (`Screen:scaleBySize()`) but use fixed sizes for text — DPI-scaled text is enormous on 300 DPI devices (source: `docs/devlog/20260608-issue04-cover-sizing-dynamic-pagination-persistent-caching_log.md`)
 - Emojis don't render in TextWidget — use `IconWidget` with built-in icon names (e.g., `appbar.search`) (source: `docs/devlog/20260609-issue04-library-browser-search-feature_log.md`)
+- **`ui/time.now()` returns an fts-encoded number, not a table** — do NOT index `.sec`/`.usec`. Use `time.to_number(time.now())` for float seconds (4 decimal precision) or `time.to_s()` for integer seconds. (source: `docs/devlog/20260614-fix-playback-ui-not-updating_log.md`)
 - **Socket reads block the coroutine** — `sock:receive()` inside a coroutine is synchronous; it blocks until data arrives or timeout expires. For cancellable downloads, yield between chunks and use a small `scheduleIn` delay (not 0) so the UI event loop can process cancel taps between reads. Set socket timeout low (e.g. 10s) so a stalled server doesn't freeze the UI for 30s per chunk. (source: cancel-download-hang fix)
 
 ### Lua Gotchas
 - **Closure scoping:** `local x = { cb = function() x:method() end }` — `x` isn't declared yet when closure is created. Fix: `local x; x = Table:new{...}` (source: `docs/devlog/20260609-issue04-library-browser-search-feature_log.md`)
 - **KOReader globals:** some modules (e.g., `lfs`) exist as `_G.lfs`, not loadable packages. Pattern: `pcall(require, "lfs")` then fall back to `_G.lfs` (source: `docs/devlog/20260608-issue04-library-browser-fixes-titles-covers-caching_log.md`)
+- **Colon-call closures:** `obj.paintTo = function(bb, x, y)` (missing `self`) causes a parameter shift when called via `obj:paintTo(bb, x, y)` — Lua expands to `obj.paintTo(obj, bb, x, y)`, so `bb` receives the widget, `x` receives the BlitBuffer. This mimics a broken BlitBuffer. Always include `self`: `function(self, bb, x, y)` or use `function(self, ...)` passthrough. (source: `docs/devlog/20260614-fix-playback-ui-not-updating_log.md`)
 
 ### Networking
 - Use `ltn12.sink.table()` + bulk `file:write()` for binary responses — streaming `file_sink` produces truncated files at TLS chunk boundaries (source: `docs/devlog/20260608-issue04-cover-image-truncation-fix_log.md`)
 
 ### ABS API Testing
 - Credentials for direct API testing are in `login.txt` at the project root (server URL + API token). Use `curl -H "Authorization: Bearer $TOKEN" $URL/api/libraries` to verify connectivity or explore endpoints without going through the plugin.
+- **Stub backend has dual time mode:** default is real-time (wall-clock via `ui/time`) for emulator use; calling `_advanceTime()` switches to manual virtual-clock mode for deterministic tests. Do NOT remove `_advanceTime()` — all player tests depend on it. (source: `docs/devlog/20260614-fix-playback-ui-not-updating_log.md`)
 
 ## Session Logs
 
 Session logs are written to `docs/devlog/` after each completed task, issue fix, or milestone.
 They capture what was done, decisions & rationale, gotchas & fixes, and next steps. Before starting a new session, read the previous session logs.
+| 2026-06-14 | issue | [fix-playback-ui-not-updating_log.md](docs/devlog/20260614-fix-playback-ui-not-updating_log.md) | Fixed frozen playback UI: stub backend now uses real-time wall clock for emulator (was frozen virtual clock); added play/pause icon toggle; 4 new tests; 43 book_detail + 75 player pass |
 | 2026-06-09 | issue | [issue17-dashboard-data-render-split_log.md](docs/devlog/20260609-issue17-dashboard-data-render-split_log.md) | Extracted `dashboard.prepare()` from `show()`; 4 new tests; 166 total pass |
 | 2026-06-09 | issue | [issue18-book-detail-data-render-split_log.md](docs/devlog/20260609-issue18-book-detail-data-render-split_log.md) | Extracted `detail.prepare()` from `show()`; 4 new tests; 172 total pass |
 | 2026-06-09 | issue | [issue20-main-lua-navigator-tests_log.md](docs/devlog/20260609-issue20-main-lua-navigator-tests_log.md) | Created `spec/test_main.lua` with 10 tests; navigator registration, onOpenDashboard wiring, dispatcher routing, first-run behavior; 196 total pass |
@@ -97,7 +102,7 @@ They capture what was done, decisions & rationale, gotchas & fixes, and next ste
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **absaudio.koplugin** (769 symbols, 775 relationships, 0 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **absaudio.koplugin** (718 symbols, 730 relationships, 0 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

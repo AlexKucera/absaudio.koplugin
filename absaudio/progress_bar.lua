@@ -40,6 +40,26 @@ function progress_bar.new(opts)
         height = height,
     }
 
+    -- Colors (e-ink friendly)
+    local bg_color = Blitbuffer.COLOR_LIGHT_GRAY   -- empty track
+    local fill_color = Blitbuffer.COLOR_DARK_GRAY    -- played portion
+
+    function widget:paintTo(bb, x, y)
+        -- Center the visual bar vertically within the tap-target dimen
+        -- (dimen.h = height + 20, so bar sits in the middle)
+        local bar_y = y + math.floor((self.dimen.h - self.height) / 2)
+        local bar_x = x
+
+        -- Draw background track (full width)
+        bb:paintRect(bar_x, bar_y, self.width, self.height, bg_color)
+
+        -- Draw fill portion (filled width based on position/duration)
+        local fill_w = self:getFillWidth()
+        if fill_w > 0 then
+            bb:paintRect(bar_x, bar_y, fill_w, self.height, fill_color)
+        end
+    end
+
     function widget:setPosition(sec)
         local v = sec or 0
         if v < 0 then v = 0 end

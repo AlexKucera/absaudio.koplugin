@@ -126,10 +126,10 @@ function helpers.makeTappableButton(text, on_tap, opts)
             h = opts.height or (btn:getSize().h + Size.padding.default),
         },
     }
-    container.ges_events[tap_event_name] = GestureRange:new{
+    container.ges_events[tap_event_name] = { GestureRange:new{
         ges = "tap",
         range = container.dimen,
-    }
+    } }
 
     -- Attach ref object if provided (for callback context)
     if opts.ref_obj and opts.ref_key then

@@ -413,6 +413,7 @@ function BookDetailView:_addNowPlaying()
         tap_event_name = "TapPlayPause",
     })
     play_btn.detail_ref = self.detail_ref
+    self.play_btn = play_btn  -- keep ref for play/pause icon toggle
     table.insert(self.content_group, CenterContainer:new{
         dimen = Geom:new{ w = self.content_width, h = play_btn.dimen.h },
         play_btn,
@@ -452,7 +453,6 @@ function BookDetailView:_addNowPlaying()
         fgcolor = Blitbuffer.COLOR_DARK_GRAY,
     }
     table.insert(skip_row, self.time_display_widget)
-    table.insert(skip_row, time_display)
 
     -- Skip forward 30s
     local skip_fwd_btn = widget_helpers.makeTappableButton("⏩", function()
@@ -513,14 +513,29 @@ end
 -- Update progress bar and time display to reflect current player state
 function BookDetailView:_updatePlaybackDisplay()
     if not self.player then return end
+
     local pos = self.player:getPosition()
     local dur = self.player:getDuration()
+    local state = self.player:getState()
+
     if self.progress_bar then
         self.progress_bar:setPosition(pos)
     end
     if self.time_display_widget then
         self.time_display_widget.text = widget_helpers.format_time(pos) .. " / " .. widget_helpers.format_time(dur)
+        self.time_display_widget:free()
     end
+    -- Toggle play/pause button icon to reflect current state
+    if self.play_btn and self.play_btn[1] then
+        local icon = (state == "playing") and "⏸" or "▶"
+        if self.play_btn[1].text ~= icon then
+            self.play_btn[1].text = icon
+            self.play_btn[1]:free()
+        end
+    end
+
+    local target = self.detail_ref or self
+    UIManager:setDirty(target, "full")
 end
 -- Periodic playback display updates (time + progress bar)
 function BookDetailView:_startPlaybackUpdates()

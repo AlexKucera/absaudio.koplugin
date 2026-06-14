@@ -407,6 +407,32 @@ run_test("getDuration returns total of all track durations", function()
     p:close()
 end)
 
+run_test("stub real-time mode advances position via wall clock (emulator)", function()
+    local p = player.create({
+        track_durations = { 100 },
+        file_paths = { "/tmp/t.m4b" },
+        playback_speed = 1.0,
+    })
+    p:play()
+    -- Default is real-time mode: position tracks wall clock.
+    -- _advanceTime switches to manual mode (test determinism).
+    p:_advanceTime(5)
+    mock.assert_equals(p:getPosition(), 5, "manual mode works after _advanceTime")
+    p:close()
+end)
+
+run_test("stub _advanceTime disables real-time mode (test determinism)", function()
+    local p = player.create({
+        track_durations = { 200 },
+        file_paths = { "/tmp/t.m4b" },
+        playback_speed = 2.0,
+    })
+    p:play()
+    p:_advanceTime(5)  -- 5 real seconds at 2x = 10s of audio
+    mock.assert_equals(p:getPosition(), 10, "2x speed applies in manual mode")
+    p:close()
+end)
+
 run_test("getCurrentTrack updates as position crosses boundaries", function()
     local p = player.create({
         track_durations = { 100, 200 },
@@ -829,6 +855,101 @@ run_test("progress_bar: integrates with player for seek callback", function()
     bar:onTapProgress({ pos = { x = 300 } })  -- 75% of 300s = 225s → clamped to 300
     -- Position should have been updated via on_seek callback
     mock.assert_equals(p:getPosition(), 225, "player position updated via bar seek")
+end)
+
+-- ============================================================
+-- Slice 8b: Progress Bar Visual Rendering (paintTo)
+-- ============================================================
+
+run_test("progress_bar: paintTo draws background and fill rectangles", function()
+    local progress_bar = require("absaudio/progress_bar")
+    local bar = progress_bar.new({ width = 400, duration = 100, on_seek = function() end })
+
+    -- Mock blitbuffer that records paintRect calls
+    local paint_log = {}
+    local mock_bb = {
+        paintRect = function(self, x, y, w, h, color)
+            table.insert(paint_log, { x=x, y=y, w=w, h=h, color=color })
+        end,
+    }
+
+    bar:setPosition(50)  -- 50% fill → 200px of 400px width
+    bar:paintTo(mock_bb, 10, 20)
+
+    -- Should draw exactly 2 rects: background + fill
+    mock.assert_equals(#paint_log, 2,
+        "paintTo should draw background + fill (2 rects)")
+
+    -- Background: full width at centered y offset
+    local bg = paint_log[1]
+    mock.assert_equals(bg.w, 400, "background rect width = bar width")
+    mock.assert_equals(bg.h, 6, "background rect height = bar height")
+    mock.assert_equals(bg.y, 17, "background y centered within tap-target dimen")
+
+    -- Fill: half width (50% of 400 = 200)
+    local fill = paint_log[2]
+    mock.assert_equals(fill.w, 200, "fill rect width = 50% of bar width")
+    mock.assert_equals(fill.h, 6, "fill rect height = bar height")
+end)
+
+run_test("progress_bar: paintTo with zero position draws only background", function()
+    local progress_bar = require("absaudio/progress_bar")
+    local bar = progress_bar.new({ width = 400, duration = 100, on_seek = function() end })
+
+    local paint_log = {}
+    local mock_bb = {
+        paintRect = function(self, x, y, w, h, color)
+            table.insert(paint_log, { x=x, y=y, w=w, h=h, color=color })
+        end,
+    }
+
+    bar:setPosition(0)
+    bar:paintTo(mock_bb, 0, 0)
+
+    -- Only background drawn when no fill
+    mock.assert_equals(#paint_log, 1,
+        "zero position should only draw background (no fill rect)")
+end)
+
+run_test("progress_bar: paintTo with full position fills entire bar", function()
+    local progress_bar = require("absaudio/progress_bar")
+    local bar = progress_bar.new({ width = 400, duration = 100, on_seek = function() end })
+
+    local paint_log = {}
+    local mock_bb = {
+        paintRect = function(self, x, y, w, h, color)
+            table.insert(paint_log, { x=x, y=y, w=w, h=h, color=color })
+        end,
+    }
+
+    bar:setPosition(100)  -- full
+    bar:paintTo(mock_bb, 0, 0)
+
+    -- Both rects should be full width
+    mock.assert_equals(paint_log[1].w, 400, "background full width")
+    mock.assert_equals(paint_log[2].w, 400, "fill full width at 100%")
+end)
+
+run_test("progress_bar: paintTo uses e-ink colors", function()
+    local progress_bar = require("absaudio/progress_bar")
+    local bar = progress_bar.new({ width = 100, duration = 10, on_seek = function() end })
+
+    local paint_log = {}
+    local mock_bb = {
+        paintRect = function(self, x, y, w, h, color)
+            table.insert(paint_log, color)
+        end,
+    }
+
+    bar:paintTo(mock_bb, 0, 0)
+
+    -- Background should be LIGHT_GRAY, fill should be DARK_GRAY
+    mock.assert_equals(paint_log[1], Blitbuffer.COLOR_LIGHT_GRAY,
+        "background uses COLOR_LIGHT_GRAY")
+    if #paint_log > 1 then
+        mock.assert_equals(paint_log[2], Blitbuffer.COLOR_DARK_GRAY,
+            "fill uses COLOR_DARK_GRAY")
+    end
 end)
 
 -- ============================================================

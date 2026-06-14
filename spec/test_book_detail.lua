@@ -58,6 +58,7 @@ package.loaded["ui/widget/container/framecontainer"] = make_widget_stub()
 package.loaded["ui/widget/container/inputcontainer"] = make_widget_stub()
 package.loaded["ui/widget/container/leftcontainer"] = make_widget_stub()
 package.loaded["ui/widget/container/scrollablecontainer"] = make_widget_stub()
+package.loaded["ui/widget/container/widgetcontainer"] = make_widget_stub()
 package.loaded["ui/widget/horizontalgroup"] = make_widget_stub()
 package.loaded["ui/widget/horizontalspan"] = make_widget_stub()
 package.loaded["ui/widget/imagewidget"] = make_widget_stub()
@@ -65,7 +66,14 @@ package.loaded["ui/widget/infomessage"] = make_widget_stub()
 package.loaded["ui/widget/confirmbox"] = make_widget_stub()
 package.loaded["ui/widget/linewidget"] = make_widget_stub()
 package.loaded["ui/widget/textboxwidget"] = make_widget_stub()
-package.loaded["ui/widget/textwidget"] = make_widget_stub()
+package.loaded["ui/widget/textwidget"] = {
+    new = function(self, opts)
+        local obj = opts or {}
+        obj.getSize = function() return { w = 100, h = 20 } end
+        obj.free = function() obj._bb = nil end  -- KOReader TextWidget:free() invalidates _bb cache
+        return obj
+    end,
+}
 package.loaded["ui/widget/verticalgroup"] = make_widget_stub()
 package.loaded["ui/widget/verticalspan"] = make_widget_stub()
 
@@ -90,7 +98,7 @@ package.loaded["ui/geometry"] = {
 }
 
 package.loaded["ui/gesturerange"] = {
-    new = function(opts) return opts or {} end,
+    new = function(self, opts) return opts or {} end,
 }
 
 package.loaded["ui/size"] = {
@@ -1663,6 +1671,207 @@ run_test("now-playing: _updatePlaybackDisplay freezes when paused", function()
     p:_advanceTime(60)  -- sim time passes but position frozen
     view:_updatePlaybackDisplay()
     mock.assert_equals(view.time_display_widget.text, playing_time, "time frozen during pause")
+end)
+
+-- ============================================================
+-- Play/pause button icon toggles based on playback state
+-- ============================================================
+
+run_test("play button icon toggles between ▶ and ⏸ on play/pause", function()
+    local player = require("absaudio/player")
+    local detail = require("absaudio/book_detail")
+    local p = player.create({ track_durations = { 200 } })
+
+    local mock_manifest_book = {
+        id = "icon_toggle",
+        title = "Icon Toggle Test",
+        local_dir = "/tmp/icon_toggle",
+        current_time = 0,
+        files = {{ filename = "t.m4b", type = "audio", status = "complete" }},
+    }
+    mock_manifest_books = { ["icon_toggle"] = mock_manifest_book }
+    mock_api_configured = false
+
+    local item = {
+        id = "icon_toggle",
+        mediaType = "book",
+        media = { duration = 200, audioFiles = {{ duration = 200 }} },
+    }
+
+    local view = detail._renderView(item)
+    view.player = p
+
+    -- Initially stopped: button should show ▶
+    view:_updatePlaybackDisplay()
+    mock.assert_equals(view.play_btn[1].text, "▶", "stopped shows play icon")
+
+    -- After play: button should show ⏸
+    p:play()
+    view:_updatePlaybackDisplay()
+    mock.assert_equals(view.play_btn[1].text, "⏸", "playing shows pause icon")
+
+    -- After pause: button should show ▶ again
+    p:pause()
+    view:_updatePlaybackDisplay()
+    mock.assert_equals(view.play_btn[1].text, "▶", "paused shows play icon")
+
+    -- Resume: button should show ⏸ again
+    p:resume()
+    view:_updatePlaybackDisplay()
+    mock.assert_equals(view.play_btn[1].text, "⏸", "resumed shows pause icon")
+end)
+
+-- ============================================================
+-- Regression: play button tap via widget handler (not direct call)
+-- Repros: hitting play in UI does nothing
+-- ============================================================
+
+run_test("regression: play button onTapPlayPause fires and changes state", function()
+    local mock_manifest_book = {
+        id = "np_tap_widget",
+        title = "Tap Widget Test",
+        local_dir = "/tmp/absaudio_np_tw",
+        current_time = 0,
+        files = {
+            { filename = "track.m4b", type = "audio", status = "complete" },
+        },
+        chapters = {},
+    }
+    mock_manifest_books = { ["np_tap_widget"] = mock_manifest_book }
+
+    local item = {
+        id = "np_tap_widget",
+        title = "Tap Widget Test",
+        mediaType = "book",
+        media = {
+            duration = 600,
+            metadata = { title = "Tap Widget Test" },
+            audioFiles = {
+                { filename = "track.m4b", format = "m4b", duration = 600 },
+            },
+        },
+    }
+    mock_api_configured = false
+
+    local view = detail._renderView(item)
+    local p = view.player
+
+    mock.assert_equals(p:getState(), "stopped", "initially stopped")
+
+    -- Find the play button widget by searching for onTapPlayPause method
+    -- Use iterative search to avoid stack overflow from circular widget refs
+    local play_button_widget = nil
+    local to_search = { view }
+    local searched = setmetatable({}, {__mode="k"})  -- weak keys; prevent cycles
+    while #to_search > 0 do
+        local widget = table.remove(to_search)
+        if searched[widget] then goto continue end
+        searched[widget] = true
+
+        if type(widget) == "table" and type(widget.onTapPlayPause) == "function" then
+            play_button_widget = widget
+            break
+        end
+        for i = 1, #(widget or {}) do
+            if type(widget[i]) == "table" then
+                table.insert(to_search, widget[i])
+            end
+        end
+        ::continue::
+    end
+    mock.assert_equals(play_button_widget ~= nil, true,
+        "play button widget should exist in view hierarchy")
+
+    -- Tap the button via its handler (simulates KOReader event dispatch)
+    local ok, err = pcall(function() play_button_widget:onTapPlayPause() end)
+    if not ok then
+        mock.fail("onTapPlayPause threw error: " .. tostring(err))
+    end
+
+    mock.assert_equals(p:getState(), "playing",
+        "player should be playing after tapping play button widget")
+end)
+
+-- ============================================================
+-- Regression: makeTappableButton wraps GestureRange in array (KOReader ipairs requirement)
+-- Repros: all makeTappableButton buttons silently ignore taps
+-- Root cause: InputContainer:onGesture does ipairs(gsseq) which requires array, not bare object
+-- ============================================================
+
+run_test("regression: makeTappableButton ges_events is array-wrapped for KOReader compatibility", function()
+    local wh = require("absaudio/widget_helpers")
+    local tapped = false
+    local btn = wh.makeTappableButton("Test", function()
+        tapped = true
+    end, {
+        width = 200,
+        height = 40,
+        tap_event_name = "TapTest",
+    })
+
+    -- ges_events value must be a table (array) for KOReader's ipairs() in onGesture
+    local gs_entry = btn.ges_events.TapTest
+    mock.assert_equals(type(gs_entry), "table",
+        "ges_events.TapTest must be a table")
+
+    -- Must have numeric index [1] containing the GestureRange (ipairs requirement)
+    mock.assert_equals(type(gs_entry[1]), "table",
+        "ges_events.TapTest[1] must exist (array-wrapped for ipairs)")
+
+    -- The first element must have 'ges' field (it's a GestureRange)
+    mock.assert_equals(type(gs_entry[1].ges), "string",
+        "ges_events.TapTest[1] must be a GestureRange with .ges field")
+    mock.assert_equals(type(gs_entry[1].ges), "string",
+        "ges_events.TapTest[1] must be a GestureRange with .ges field")
+end)
+
+-- ============================================================
+-- Regression: _updatePlaybackDisplay invalidates TextWidget cache via free()
+-- Repros: time display shows stale text during playback (never updates)
+-- Root cause: KOReader's TextWidget caches rendered bitmap in _bb;
+--   setting .text doesn't clear the cache, so paintTo blits old content
+-- ============================================================
+
+run_test("regression: _updatePlaybackDisplay calls free() on text widget", function()
+    local detail = require("absaudio/book_detail")
+
+    local mock_manifest_book = {
+        id = "free_cache_test",
+        title = "Free Cache Test",
+        local_dir = "/tmp/free_cache_test",
+        current_time = 0,
+        files = {{ filename = "track.m4b", type = "audio", status = "complete" }},
+    }
+    mock_manifest_books = { ["free_cache_test"] = mock_manifest_book }
+
+    local item = {
+        id = "free_cache_test",
+        mediaType = "book",
+        media = { duration = 3600, audioFiles = {{ duration = 3600 }} },
+    }
+    mock_api_configured = false
+
+    local view = detail._renderView(item)
+    -- Inject a mock player that reports position 42.5s
+    view.player = {
+        getPosition = function() return 42.5 end,
+        getDuration = function() return 3600 end,
+        getState = function() return "playing" end,
+    }
+
+    -- Seed the TextWidget with a fake cached bitmap (simulating KOReader's _bb)
+    if view.time_display_widget then
+        view.time_display_widget._bb = "fake_cached_bitmap"
+    end
+
+    -- Call _updatePlaybackDisplay — should update text AND free cache
+    view:_updatePlaybackDisplay()
+
+    mock.assert_equals(view.time_display_widget.text, "0:42 / 1:00:00",
+        "time display text should show updated position")
+
+    mock.assert_equals(view.time_display_widget._bb, nil,
+        "TextWidget _bb cache should be nil after free() (forces re-render on next paintTo)")
 end)
 
 print(string.format("\n%d passed, %d failed", passed, failed))

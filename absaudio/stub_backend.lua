@@ -1,5 +1,6 @@
 -- Stub playback backend for absaudio.koplugin
--- Simulates audio playback using a virtual clock for testing/emulator use.
+-- Simulates audio playback using a wall-clock timer for emulator use,
+-- or a manually-advanced virtual clock for testing.
 --
 -- Public API (same interface as InkviewBackend):
 --   stub_backend.new(opts) → backend instance
@@ -7,9 +8,26 @@
 --     getPosition(), setPosition(sec), getDuration()
 --     getCurrentTrack(), getPlaybackSpeed(), setPlaybackSpeed(speed)
 --     isFinished()
---     _advanceTime(delta)  — test-only: advance virtual clock
+--     _advanceTime(delta)  — test-only: advance virtual clock (disables real-time mode)
 --
 -- Internal state machine: "stopped" | "playing" | "paused"
+-- Time mode: real-time (default, emulator) | manual (after _advanceTime call, tests)
+
+------------------------------------------------------------------------
+-- Wall-clock resolver: prefer KOReader's high-resolution time module,
+-- fall back to os.time() (1-second resolution) for standalone/test use.
+------------------------------------------------------------------------
+local get_wall_time
+do
+    local ok, time_mod = pcall(require, "ui/time")
+    if ok and time_mod.now then
+        get_wall_time = function()
+            return time_mod.to_number(time_mod.now())
+        end
+    else
+        get_wall_time = function() return os.time() end
+    end
+end
 
 local stub_backend = {}
 
@@ -32,9 +50,11 @@ function stub_backend.new(opts)
     local current_track = 0
     local finished = false
 
-    -- Virtual clock (for testing)
-    local sim_time = 0
-    local play_start_sim = 0
+    -- Time tracking: real-time mode (emulator) and manual mode (tests)
+    local use_real_time = true   -- false once _advanceTime is called
+    local sim_time = 0           -- manual virtual clock (tests)
+    local play_start_sim = 0     -- sim_time snapshot at play start
+    local play_start_real = 0    -- wall-time snapshot at play start
     local paused_at_position = nil
 
     ----------------------------------------------------------------
@@ -52,7 +72,12 @@ function stub_backend.new(opts)
 
     local function effective_position()
         if state == "playing" and paused_at_position == nil then
-            local elapsed = sim_time - play_start_sim
+            local elapsed
+            if use_real_time then
+                elapsed = get_wall_time() - play_start_real
+            else
+                elapsed = sim_time - play_start_sim
+            end
             return math.min(position + elapsed * playback_speed, total_duration)
         else
             return position
@@ -102,6 +127,7 @@ function stub_backend.new(opts)
         if state == "playing" then
             position = effective_position()
             play_start_sim = sim_time
+            play_start_real = get_wall_time()
         end
         playback_speed = speed or 1.0
     end
@@ -113,6 +139,7 @@ function stub_backend.new(opts)
         position = effective_position()
         paused_at_position = nil
         play_start_sim = sim_time
+        play_start_real = get_wall_time()
         state = "playing"
         update_current_track()
         check_auto_finish()
@@ -129,6 +156,7 @@ function stub_backend.new(opts)
         if state ~= "paused" then return end
         paused_at_position = nil
         play_start_sim = sim_time
+        play_start_real = get_wall_time()
         state = "playing"
         check_auto_finish()
     end
@@ -147,6 +175,7 @@ function stub_backend.new(opts)
         position = clamped
         if state == "playing" then
             play_start_sim = sim_time
+            play_start_real = get_wall_time()
         elseif state == "paused" then
             paused_at_position = clamped
         end
@@ -162,10 +191,13 @@ function stub_backend.new(opts)
         paused_at_position = nil
         sim_time = 0
         play_start_sim = 0
+        play_start_real = 0
+        use_real_time = true
     end
 
-    -- Test-only: advance virtual clock
+    -- Test-only: advance virtual clock (switches to manual mode)
     function self:_advanceTime(delta)
+        use_real_time = false
         sim_time = sim_time + delta
         if state == "playing" then
             check_auto_finish()
