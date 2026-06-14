@@ -8,7 +8,7 @@ Busted-based test suite for the absaudio plugin. Each source module has a corres
 
 Tests mirror the source layout:
 - Root modules: `test_api.lua`, `test_config.lua`, `test_manifest.lua`, `test_error_handler.lua`, `test_logger.lua`, `test_main.lua`
-- absaudio/ modules: `test_navigator.lua`, `test_downloader.lua`, `test_chunked_http.lua`, `test_cover_cache.lua`, `test_library_store.lua`, `test_library_browser.lua`, `test_book_detail.lua`, `test_dashboard_widget.lua`, `test_widget_helpers.lua`, `test_chapter_navigator.lua`
+- absaudio/ modules: `test_navigator.lua`, `test_downloader.lua`, `test_chunked_http.lua`, `test_cover_cache.lua`, `test_library_store.lua`, `test_library_browser.lua`, `test_book_detail.lua`, `test_dashboard_widget.lua`, `test_widget_helpers.lua`, `test_chapter_navigator.lua`, `test_time_math.lua`, `test_ring_buffer.lua`, `test_atempo.lua`
 
 ## Local Contracts
 

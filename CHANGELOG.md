@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file. The format 
 ## [Unreleased]
 
 ### feat
+- **audio:** add pure FFmpeg math foundation — three zero-dependency modules (no FFI, no I/O, no device) for the in-app audio backend (PRD #31): `time_math.lua` (`av_rescale_q` rescale with `AV_ROUND_NEAR_INF` half-away-from-zero rounding, PTS↔ms/s conversion, second/millisecond round-trip, beyond-stream-end clamp), `ring_buffer.lua` (PCM ring-buffer index math over immutable absolute-monotonic `{capacity,write,read}` counters — fill/free/empty/full, overrun/underrun detection, write/read returning NEW state, `% capacity` wraparound slots), and `atempo.lua` (FFmpeg `atempo` filter-chain builder — single stage for 0.5×–2.0, chains 2.0/0.5 stages for out-of-range speeds like 4× = `atempo=2,atempo=2`); 53 new tests via the custom `luajit` harness; closes #32
 - **download-progress:** add download progress widget with file count, percentage, ETA, and cancel button
 - **download:** add free space check before downloads using `df` command
 - **download:** add coroutine-based chunked download (`start_chunked_download`) using raw socket I/O via `chunked_http` module that yields to KOReader event loop every 32KB, enabling progress updates and cancel during large file transfers

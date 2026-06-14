@@ -40,13 +40,30 @@ Each module is a self-contained Lua file with a clear public API documented in t
 - Shared utilities: `format_duration`, `format_time`, `format_file_size`, `addSeparator`, `makeTappableButton`
 - Extracted from triplicated code across dashboard, library_browser, book_detail
 
-### Pure logic (`chapter_navigator.lua`)
-- Zero-dependency module (no FFI, no KOReader globals, no I/O) — the deepest, most testable module
+### Pure logic modules
+
+All zero-dependency (no FFI, no KOReader globals, no I/O) — the deepest, most testable modules. Tested with the custom `run_test`/`mock.assert_equals` harness via `luajit` (NOT busted — busted is not installed).
+
+#### `chapter_navigator.lua` — position ↔ chapter mapping
 - Maps a global playback position (seconds) to ABS chapters (`{ id, start, end, title }` on `media.chapters`, a single global timeline)
 - Public API: `current(pos, chapters)`, `next(pos, chapters)`, `previous(pos, chapters, opts)`, `chapter_start(index, chapters)`
 - Boundary convention: half-open `[start, end)` — a position at a boundary belongs to the LATER chapter; beyond-last clamps to last; empty → `(0, nil)`
 - `previous()` uses smart-restart UX (deep in chapter >`opts.threshold` seconds, default 10 → restart current; near start → previous chapter, clamped to first)
 - Used by `book_detail.lua` for: chapter-name display, tappable chapter list (seek-to-chapter), next/prev skip buttons
+
+#### `time_math.lua` — FFmpeg time-base rescale arithmetic
+- Pure `av_rescale_q` arithmetic (issue #32, audio slice A): converts a packet PTS in a stream's `time_base` rational `{num, den}` to ms/seconds, with half-away-from-zero rounding (FFmpeg `AV_ROUND_NEAR_INF`)
+- Public API: `rescale(value, from_tb, to_tb)`, `to_ms(pts, time_base)`, `to_seconds(pts, time_base)`, `ms_to_seconds(ms)`, `seconds_to_ms(sec)`, `clamp(value, max)`
+- Foundation for the FFmpeg backend's live-position computation (PRD #31); no caller yet
+
+#### `ring_buffer.lua` — PCM ring-buffer index math
+- Pure index arithmetic for the FFmpeg backend's decoupled decode/output ring buffer (PRD #31). No PCM storage — just cursor math
+- State: immutable `{capacity, write, read}` where `write`/`read` are absolute monotonic byte counters (only grow); `fill = write - read`; wraparound via `counter % capacity`
+- Public API: `new(capacity)`, `fill`, `free`, `empty`, `full`, `can_write(n)` (overrun check), `can_read(n)` (underrun check), `write(n)`/`read(n)` (return NEW state, error on overrun/underrun), `write_slot`/`read_slot`
+
+#### `atempo.lua` — FFmpeg atempo filter-chain builder
+- Builds valid `atempo` filter-chain strings for arbitrary playback speeds (issue #32, audio slice A). Single stage covers `[0.5, 2.0]`; out-of-range chains 2.0/0.5 stages (product of all stages == input speed)
+- Public API: `chain(speed)` → string (e.g. `"atempo=1.5"`, `"atempo=2,atempo=2"`); `STAGE_MIN = 0.5`, `STAGE_MAX = 2.0` constants. Errors if speed ≤ 0 or non-number. `%g` formatting mirrors `player.format_speed`
 
 ## Work Guidance
 
