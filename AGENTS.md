@@ -58,6 +58,7 @@
 Session logs are written to `docs/devlog/` after each completed task, issue fix, or milestone.
 They capture what was done, decisions & rationale, gotchas & fixes, and next steps. Before starting a new session, read the previous session logs.
 | 2026-06-14 | issue | [issue07-chapter-navigation-skip-controls-speed-control_log.md](docs/devlog/20260614-issue07-chapter-navigation-skip-controls-speed-control_log.md) | Issue #7/Slice 6: new `chapter_navigator.lua` pure module (current/next/previous/chapter_start, smart-restart prev); speed `next_speed`/`format_speed` in player; chapter name widget + ⏮/⏭/speed-badge row + seek-to-chapter in book_detail; persisted speed (config default 1×); 44 new tests (30 navigator, +4 player, +2 config, +8 book_detail) |
+| 2026-06-15 | issue | [issue39-audio-slice-d-ffmpeg-alsa-glue-backend-wiring_log.md](docs/devlog/20260615-issue39-audio-slice-d-ffmpeg-alsa-glue-backend-wiring_log.md) | Issue #39/Slice D: full FFmpeg 6.0 struct layouts + offset tests in `audio_ffi.lua` (34 tests); new `audio_device.lua` (decoder+ALSA sink+schedule mirroring proven probe); `ffmpeg_backend` auto-detect wiring (wrapper-sink pattern); `player.getLastError()` delegation; 680 total pass |
 | 2026-06-14 | issue | [fix-playback-ui-not-updating_log.md](docs/devlog/20260614-fix-playback-ui-not-updating_log.md) | Fixed frozen playback UI: stub backend now uses real-time wall clock for emulator (was frozen virtual clock); added play/pause icon toggle; 4 new tests; 43 book_detail + 75 player pass |
 | 2026-06-14 | generic | [fix-playback-ui-full-screen-flash_log.md](docs/devlog/20260614-fix-playback-ui-full-screen-flash_log.md) | Playback UI full-screen e-ink flash every 0.5s; changed `setDirty(target, "full")` → `"partial"` in `_updatePlaybackDisplay()`; reserve `"full"` for widget swaps; 51 book_detail / 366 total pass
 | 2026-06-14 | generic | [fix-download-dir-tmp-fallback_log.md](docs/devlog/20260614-fix-download-dir-tmp-fallback_log.md) | Removed silent `/tmp/audiobooks` fallback in downloader; added `config.default_download_dir()`/`get_download_dir()` (persistent KOReader data dir); pre-fill Settings field; +4 config tests; 18 config + 82 downloader pass
@@ -120,7 +121,7 @@ They capture what was done, decisions & rationale, gotchas & fixes, and next ste
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **absaudio.koplugin** (876 symbols, 898 relationships, 0 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **absaudio.koplugin** (902 symbols, 926 relationships, 0 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 

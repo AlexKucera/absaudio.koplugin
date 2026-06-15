@@ -139,6 +139,131 @@ run_test("override is the single source of truth when set", function()
     mock.assert_equals(audio_ffi.is_available(), false, "restored → false on dev")
 end)
 
+-- ============================================================
+-- Issue #39 (slice D): FFmpeg 6.0 struct offsets match the device probe.
+-- These verify the full struct layouts declared in audio_ffi's cdefs land
+-- each named field at the on-device-confirmed byte offset. LuaJIT computes
+-- ffi.offsetof from cdefs WITHOUT loading any library, so these run on dev.
+-- Source of truth: docs/devlog/issue39-tdd-plan.md offset table.
+-- ============================================================
+
+local ffi = require("ffi")
+-- Ensure cdefs are declared (is_available triggers declare_cdefs).
+audio_ffi._set_probe_override(nil)
+audio_ffi.is_available()
+
+local function assert_offset(struct, field, expected)
+    local off = ffi.offsetof("struct " .. struct, field)
+    mock.assert_equals(off, expected,
+        struct .. "." .. field .. " at offset " .. expected)
+end
+
+run_test("AVFrame: data array at offset 0 (data[0]@0, data[1]@8)", function()
+    assert_offset("AVFrame", "data", 0)
+end)
+
+run_test("AVFrame: linesize array at offset 64 (linesize[0]@64)", function()
+    assert_offset("AVFrame", "linesize", 64)
+end)
+
+run_test("AVFrame: nb_samples at offset 112", function()
+    assert_offset("AVFrame", "nb_samples", 112)
+end)
+
+run_test("AVFrame: format at offset 116", function()
+    assert_offset("AVFrame", "format", 116)
+end)
+
+run_test("AVFrame: sample_rate at offset 168 (NOT 256 as docs claim)", function()
+    assert_offset("AVFrame", "sample_rate", 168)
+end)
+
+run_test("AVFrame: pts at offset 192", function()
+    assert_offset("AVFrame", "pts", 192)
+end)
+
+run_test("AVCodecParameters: codec_type at offset 0", function()
+    assert_offset("AVCodecParameters", "codec_type", 0)
+end)
+
+run_test("AVCodecParameters: codec_id at offset 4", function()
+    assert_offset("AVCodecParameters", "codec_id", 4)
+end)
+
+run_test("AVCodecParameters: codec_tag at offset 8", function()
+    assert_offset("AVCodecParameters", "codec_tag", 8)
+end)
+
+run_test("AVCodecParameters: channel_layout at offset 96", function()
+    assert_offset("AVCodecParameters", "channel_layout", 96)
+end)
+
+run_test("AVCodecParameters: channels at offset 104", function()
+    assert_offset("AVCodecParameters", "channels", 104)
+end)
+
+run_test("AVCodecParameters: sample_rate at offset 108", function()
+    assert_offset("AVCodecParameters", "sample_rate", 108)
+end)
+
+run_test("AVCodecParameters: frame_size at offset 116", function()
+    assert_offset("AVCodecParameters", "frame_size", 116)
+end)
+
+run_test("AVCodecContext: time_base at offset 76", function()
+    assert_offset("AVCodecContext", "time_base", 76)
+end)
+
+run_test("AVCodecContext: sample_rate at offset 304", function()
+    assert_offset("AVCodecContext", "sample_rate", 304)
+end)
+
+run_test("AVCodecContext: channels at offset 308", function()
+    assert_offset("AVCodecContext", "channels", 308)
+end)
+
+run_test("AVCodecContext: sample_fmt at offset 312", function()
+    assert_offset("AVCodecContext", "sample_fmt", 312)
+end)
+
+run_test("AVCodecContext: frame_size at offset 316", function()
+    assert_offset("AVCodecContext", "frame_size", 316)
+end)
+
+run_test("AVCodecContext: channel_layout at offset 336", function()
+    assert_offset("AVCodecContext", "channel_layout", 336)
+end)
+
+run_test("AVFormatContext: nb_streams at offset 44", function()
+    assert_offset("AVFormatContext", "nb_streams", 44)
+end)
+
+run_test("AVFormatContext: streams at offset 48", function()
+    assert_offset("AVFormatContext", "streams", 48)
+end)
+
+run_test("AVFormatContext: duration at offset 72", function()
+    assert_offset("AVFormatContext", "duration", 72)
+end)
+
+run_test("AVFormatContext: start_time at offset 64", function()
+    assert_offset("AVFormatContext", "start_time", 64)
+end)
+
+run_test("AVStream: codecpar at offset 16", function()
+    assert_offset("AVStream", "codecpar", 16)
+end)
+
+run_test("AVStream: time_base at offset 24", function()
+    assert_offset("AVStream", "time_base", 24)
+end)
+
+run_test("AVRational: 8 bytes (num@0, den@4) for time-base rescale", function()
+    mock.assert_equals(ffi.sizeof("struct AVRational"), 8, "AVRational is {int,int}")
+    assert_offset("AVRational", "num", 0)
+    assert_offset("AVRational", "den", 4)
+end)
+
 -- Summary
 print(string.format("\n%d passed, %d failed", passed, failed))
 if #errors > 0 then

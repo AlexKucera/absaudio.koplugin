@@ -225,6 +225,7 @@ function player.create(opts)
     function inst:getPlaybackSpeed() return backend:getPlaybackSpeed() end
     function inst:setPlaybackSpeed(speed) backend:setPlaybackSpeed(speed) end
     function inst:isFinished() return backend:isFinished() end
+    function inst:getLastError() return backend.getLastError and backend:getLastError() end
 
     function inst:play() backend:play() end
     function inst:pause() backend:pause() end

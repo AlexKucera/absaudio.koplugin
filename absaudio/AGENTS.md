@@ -73,9 +73,10 @@ All zero-dependency (no FFI, no KOReader globals, no I/O) — the deepest, most 
 
 Control-flow modules behind injectable interfaces so the full producer/consumer/wake-lock orchestration is unit-testable off-device with fakes. The device session fills the real FFmpeg/ALSA/inkview bodies into these seams.
 
-#### `audio_ffi.lua` — guarded FFI shim + availability probe
-- Declares FFmpeg/ALSA cdefs inside `pcall(ffi.cdef)` (guarded against redeclaration) + implements the real `is_available()` (dlopen `libaudio-engine` + all `KEY_SYMBOLS` resolve, memoized). False on dev; never crashes.
-- Public API: `is_available()`, `_set_probe_override(fn|nil)`, `KEY_SYMBOLS`. All symbol lookups are `pcall`-guarded (lesson from `IsPlayingMP3` probe crash). The real decode bodies are filled in the device session.
+#### `audio_ffi.lua` — guarded FFI shim + struct layouts + availability probe
+- Declares **full FFmpeg 6.0 struct layouts** (AVFormatContext, AVStream, AVCodecParameters, AVCodecContext, AVFrame, AVRational) with on-device-verified field offsets, plus **all FFmpeg/ALSA function signatures** from the probe — all inside `pcall(ffi.cdef)` guards. Gaps between named fields are bridged with char-array padding to preserve alignment.
+- Implements `is_available()` (guarded dlopen `libaudio-engine` + `KEY_SYMBOLS` check, memoized, false on dev) and `get_lib()` (guarded `ffi.load` + cdef ensure, memoized, returns lib handle or nil).
+- Public API: `is_available()`, `get_lib()`, `declare_cdefs(ffi)`, `_set_probe_override(fn|nil)`, `KEY_SYMBOLS`. All symbol lookups are `pcall`-guarded (lesson from `IsPlayingMP3` probe crash). Off-device: structs declare and `ffi.offsetof` tests pass without loading any lib.
 
 #### `wake_lock.lua` — paired, idempotent firmware sleep-ban wrapper
 - Prevents PocketBook auto-suspend from stalling the output pump during long playback. Injectable `opts.impl = {acquire, release}`; default is a guarded inkview probe (`BanSleep`/`AllowSleep`, no-op on dev).
@@ -89,6 +90,15 @@ Control-flow modules behind injectable interfaces so the full producer/consumer/
 - `opts.schedule` cadence drains `opts.buffer` to `opts.sink.write`, kicks the producer (backpressure), survives underrun (empty buffer → skip + reschedule), self-stops on producer-done + buffer-empty. Does NOT import decode_producer — receives it via `opts.producer`.
 - Public API: `new(opts)`, `start()`, `tick()`, `stop()`, `is_running()`.
 
+### Audio pipeline — slice D (issue #39)
+
+#### `audio_device.lua` — real FFmpeg decode + ALSA output glue
+- The device implementations behind slice C's injectable seams: `create_decoder(path)` (FFmpeg open→find_stream→decode→swr FLTP→S16), `create_alsa_sink(opts)` (opens `plughw:0,0`, S16_LE/RW_INTERLEAVED), `create_schedule()` (UIManager:scheduleIn wrapper).
+- The decode loop **mirrors `audio_probe.run_play_test` exactly** — the ONE confirmed-audible code path on PB700K3. Deviation risks re-introducing dead ends (tts_sm virtual sink, wrong sample_rate offset, FLTP not resampled).
+- All FFmpeg/ALSA calls pcall-guarded; errors surface as `(nil, err)`. Native SIGSEGV from bad pointers is NOT catchable — only on-device-verified offsets are touched.
+- Off-device (Mac): `audio_ffi.get_lib()` returns nil → all factories return `(nil, err)` gracefully. Real decode/output is HITL device-only.
+- Public API: `create_decoder(path)→{read_frame,close,get_duration_ms,get_sample_rate,get_channels}`, `create_alsa_sink(opts)→{write,close,open}`, `create_schedule()→fn`.
+
 ### Playback backends
 
 All three implement the **same backend contract** so `player.create()`'s strategy can swap them unchanged: `new(opts)`, `play/pause/resume/stop/close`, `getPosition/setPosition/getDuration`, `getCurrentTrack/getPlaybackSpeed/setPlaybackSpeed`, `isFinished/getState`. `player.create()` selects via `opts.backend`: explicit `"stub"`/`"inkview"`/`"ffmpeg"`, or omitted/`"auto"` → auto-detect via `ffmpeg_backend.is_available()` then fall back to stub (so dev/tests are unaffected). `inst:getBackendName()` reports which was selected.
@@ -101,7 +111,8 @@ All three implement the **same backend contract** so `player.create()`'s strateg
 
 #### `ffmpeg_backend.lua` — real FFmpeg+ALSA backend (slice C: pipeline wired)
 - Backend for real in-app audio via `libaudio-engine.so` (FFmpeg decode + ALSA output), PRD #31 / decision log (Path C, Design 3 decoupled ring buffer).
-- **Slice C status**: full transport orchestration wired — `play()` starts producer + pump + wake-lock; `stop()`/`close()` tears all down. Dual position source: CLOCK mode (no `decoder_factory`, identical to stub — used by emulator/tests/slice B's 45 contract tests) or PRODUCER mode (`decoder_factory` provided — position from PTS via `on_position`, used by slice C integration tests + device). The real FFmpeg decode bodies + ALSA output are DEVICE-only (HITL).
+- **Slice C/D status**: full transport orchestration wired — `play()` starts producer + pump + wake-lock; `stop()`/`close()` tears all down. Dual position source: CLOCK mode (no `decoder_factory`, identical to stub — used by emulator/tests/slice B's 45 contract tests) or PRODUCER mode (`decoder_factory` provided — position from PTS via `on_position`, used by slice C integration tests + device). The real FFmpeg decode bodies + ALSA output are DEVICE-only (HITL).
+- **Slice D (#39) auto-detect**: when `is_available()` is true AND no explicit mocks injected, `new()` builds the real pipeline from `audio_device` automatically (wrapper-sink pattern: decoder factory creates the real ALSA sink with correct params as a side effect). Off-device, auto-detect triggers but `audio_device.create_decoder` returns nil → producer errors gracefully (NOT silent clock mode).
 - Position tracked in ms (FFmpeg PTS unit); clamped via `time_math.clamp`, converted via `time_math.ms_to_seconds`. Owns a `pcm_buffer` (producer/pump storage) + a legacy `ring_buffer` (for `getRingBuffer()` backward compat).
 - `is_available()` delegates to `audio_ffi.is_available()` (guarded, memoized). Mockable via `_set_probe_override(fn)` or `opts.ffi_probe`.
 - **Slice C device seams** (opts, injected): `decoder_factory(path)→decoder`, `sink={write}`, `schedule(delay,fn)`, `wake_impl={acquire,release}`. The device session fills these with real FFmpeg/ALSA/inkview calls.

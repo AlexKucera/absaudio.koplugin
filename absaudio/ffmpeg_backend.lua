@@ -110,6 +110,47 @@ function ffmpeg_backend.new(opts)
     local chunk_size = opts.chunk_size or 4096
     local path = file_paths and file_paths[1]  -- first track (multi-track in a later slice)
 
+    ----------------------------------------------------------------
+    -- AUTO-DETECT: when the FFmpeg backend is available (device) AND no
+    -- explicit pipeline opts are injected (tests/emulator), build the real
+    -- decoder/sink/schedule from audio_device. This is issue #39's wiring:
+    -- the proven probe pipeline drops in automatically on the PocketBook.
+    -- Off-device (Mac), is_available() is false → CLOCK mode (unchanged).
+    ----------------------------------------------------------------
+    local probe_fn = ffi_probe or ffmpeg_backend.is_available
+    if not decoder_factory and path and probe_fn() then
+        local ad_ok, ad = pcall(require, "absaudio/audio_device")
+        if ad_ok and ad and ad.create_decoder then
+            -- Wrapper sink: the real ALSA sink can't be built until the decoder
+            -- opens the file (sample_rate/channels unknown beforehand). The
+            -- decoder factory creates the real sink as a side effect once it
+            -- discovers the codec params; this placeholder delegates to it.
+            local inner_sink = nil
+            local real_decoder_factory = function(p)
+                local dec, derr = ad.create_decoder(p)
+                if dec and not inner_sink then
+                    inner_sink = ad.create_alsa_sink({
+                        sample_rate = dec:get_sample_rate(),
+                        channels = dec:get_channels(),
+                    })
+                end
+                return dec, derr
+            end
+            decoder_factory = real_decoder_factory
+            sink = {
+                write = function(data, n)
+                    if inner_sink then inner_sink.write(data, n) end
+                end,
+                close = function()
+                    if inner_sink then inner_sink.close() end
+                end,
+            }
+            if not schedule then
+                schedule = ad.create_schedule()
+            end
+        end
+    end
+
     -- Total duration (seconds)
     local total_duration = 0
     for _, d in ipairs(track_durations) do

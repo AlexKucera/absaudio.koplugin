@@ -529,10 +529,13 @@ run_test("factory: auto-detect picks ffmpeg when is_available() is true (device)
         backend = "auto",
     })
     mock.assert_equals(p:getBackendName(), "ffmpeg", "ffmpeg selected when available")
-    -- transport still works end-to-end through the selected backend
+    -- Issue #39: when available, play() auto-wires the real audio_device pipeline.
+    -- Off-device (Mac), audio_device.create_decoder returns (nil, err) because the
+    -- FFmpeg lib isn't loaded → the producer surfaces an error (NOT silent clock
+    -- mode). On the real device, the decoder succeeds and playback is audible.
     p:play()
-    p:_advanceTime(5)
-    mock.assert_equals(p:getPosition(), 5, "position advances via auto-selected backend")
+    mock.assert_equals(p:getState(), "stopped", "stops after failed decoder (off-device)")
+    mock.assert_equals(type(p:getLastError()), "string", "decoder error surfaced")
     p:close()
     ffmpeg_backend._set_probe_override(nil)  -- restore for any later tests
 end)
