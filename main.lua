@@ -111,6 +111,35 @@ function ABSAudio:addToMainMenu(menu_items)
                     self:onRunAudioProbe()
                 end,
             },
+            {
+                -- Slice C de-risk probe: resolve every FFmpeg/ALSA symbol the
+                -- decode/output pipeline needs, across candidate .so files. Pure
+                -- detection — no decode, no snd_pcm_open. Determines the cdef
+                -- strategy for audio_ffi.lua on THIS device.
+                text = _("Audio capability scan (FFmpeg/ALSA symbols)"),
+                keep_menu_open = false,
+                callback = function()
+                    self:onRunAudioCapabilityScan()
+                end,
+            },
+            {
+                -- Slice C decode-layout probe: opens a real M4B, decodes one
+                -- frame, dumps FFmpeg struct field offsets/values. Verifies the
+                -- struct layouts before writing the real decoder_factory.
+                text = _("Audio decode layout probe (opens a test file)"),
+                keep_menu_open = false,
+                callback = function()
+                    self:onRunAudioDecodeProbe()
+                end,
+            },
+            {
+                -- Play-test: decode ~5s of audio and output via ALSA.
+                text = _("Audio play-test (decode + play ~5s)"),
+                keep_menu_open = false,
+                callback = function()
+                    self:onRunAudioPlayTest()
+                end,
+            },
         },
     }
 end
@@ -362,7 +391,63 @@ function ABSAudio:onRunAudioProbe()
     if #summary > 800 then summary = summary:sub(1, 800) .. "\n…(see report file)" end
     UIManager:show(InfoMessage:new{
         text = summary .. "\n\nReport: /mnt/ext1/absaudio_probe_report.txt",
-        timeout = 0,
+        timeout = 60,
+    })
+end
+
+--- Slice C de-risk handler: resolve every FFmpeg/ALSA symbol the decode/output
+--- pipeline needs, across candidate .so files. Pure detection (no decode, no
+--- snd_pcm_open). Writes the same report path as the probe; shows the VERDICT.
+function ABSAudio:onRunAudioCapabilityScan()
+    local probe = require("absaudio/audio_probe")
+    local report = probe.run_capability_scan()
+    -- Pull the VERDICT section for the on-screen message.
+    local verdict = report:match("(==== 3%..*)") or report
+    if #verdict > 1000 then verdict = verdict:sub(1, 1000) .. "\n…(see report file)" end
+    UIManager:show(InfoMessage:new{
+        text = verdict .. "\n\nReport: /mnt/ext1/absaudio_probe_report.txt",
+        timeout = 60,
+    })
+end
+
+--- Slice C decode-layout probe handler: opens a real downloaded M4B, decodes
+--- one frame, dumps the FFmpeg struct field offsets/values. Verifies the struct
+--- layouts before writing the real decoder_factory. No ALSA access.
+function ABSAudio:onRunAudioDecodeProbe()
+    local probe = require("absaudio/audio_probe")
+    -- The probe wraps its own body in xpcall and ALWAYS writes the report file,
+    -- even on crash (with full traceback appended). This outer xpcall is a
+    -- second layer in case the module itself fails to load.
+    local ok, report = xpcall(probe.run_decode_layout_probe, debug.traceback)
+    if not ok then
+        report = "==== HANDLER-LEVEL CRASH ====\n" .. tostring(report)
+    end
+    -- Show sections 4+ on screen (field dumps + verdict).
+    local summary = report:match("(==== 4%..*)")
+        or report:match("(==== PROBE CRASHED.*)")
+        or report
+    if #summary > 1500 then summary = summary:sub(1, 1500) .. "\n...(see report file)" end
+    UIManager:show(InfoMessage:new{
+        text = summary .. "\n\nReport: /mnt/ext1/absaudio_probe_report.txt",
+        timeout = 60,
+    })
+end
+
+--- Play-test probe handler: decode ~5s of audio, convert FLTP->S16, push to ALSA.
+function ABSAudio:onRunAudioPlayTest()
+    local probe = require("absaudio/audio_probe")
+    local ok, report = xpcall(probe.run_play_test, debug.traceback)
+    if not ok then
+        report = "==== HANDLER-LEVEL CRASH ====\n" .. tostring(report)
+    end
+    local summary = report:match("(==== 5%..*)")
+        or report:match("(==== PROBE CRASHED.*)")
+        or report:match("(==== HANDLER-LEVEL.*)")
+        or report
+    if #summary > 1500 then summary = summary:sub(1, 1500) .. "\n...(see report file)" end
+    UIManager:show(InfoMessage:new{
+        text = summary .. "\n\nReport: /mnt/ext1/absaudio_probe_report.txt",
+        timeout = 60,
     })
 end
 
