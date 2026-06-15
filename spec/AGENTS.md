@@ -8,7 +8,7 @@ Busted-based test suite for the absaudio plugin. Each source module has a corres
 
 Tests mirror the source layout:
 - Root modules: `test_api.lua`, `test_config.lua`, `test_manifest.lua`, `test_error_handler.lua`, `test_logger.lua`, `test_main.lua`
-- absaudio/ modules: `test_navigator.lua`, `test_downloader.lua`, `test_chunked_http.lua`, `test_cover_cache.lua`, `test_library_store.lua`, `test_library_browser.lua`, `test_book_detail.lua`, `test_dashboard_widget.lua`, `test_widget_helpers.lua`, `test_chapter_navigator.lua`, `test_time_math.lua`, `test_ring_buffer.lua`, `test_atempo.lua`, `test_ffmpeg_backend.lua`
+- absaudio/ modules: `test_navigator.lua`, `test_downloader.lua`, `test_chunked_http.lua`, `test_cover_cache.lua`, `test_library_store.lua`, `test_library_browser.lua`, `test_book_detail.lua`, `test_dashboard_widget.lua`, `test_widget_helpers.lua`, `test_chapter_navigator.lua`, `test_time_math.lua`, `test_ring_buffer.lua`, `test_atempo.lua`, `test_ffmpeg_backend.lua`, `test_ffmpeg_backend_pipeline.lua`, `test_pcm_buffer.lua`, `test_audio_ffi.lua`, `test_wake_lock.lua`, `test_decode_producer.lua`, `test_output_pump.lua`
 
 ## Local Contracts
 
@@ -34,7 +34,7 @@ Tests mirror the source layout:
 ## Verification
 
 - Run from project root, per file: `luajit spec/test_<module>.lua` (`busted` is NOT installed; each test file is a standalone luajit script).
-- Current count: ~555 tests across all files
+- Current count: ~642 tests across all files (slice C added 87: pcm_buffer 15, audio_ffi 8, wake_lock 8, decode_producer 11, output_pump 11, pipeline integration 12 + baseline)
 - All tests must pass before any commit
 
 ## Child DOX Index

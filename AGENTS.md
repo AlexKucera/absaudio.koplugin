@@ -72,6 +72,7 @@ They capture what was done, decisions & rationale, gotchas & fixes, and next ste
 | 2026-06-10 | generic | [dashboard-downloaded-books-tappable-detail-nav_log.md](docs/devlog/20260610-dashboard-downloaded-books-tappable-detail-nav_log.md) | Made downloaded books in dashboard tappable; added `_onBookTap` → nav.push('detail'); 2 new tests; 311 total pass |
 
 <!-- write-log: session-log-index -->
+| 2026-06-14 | issue | [issue34-audio-slice-c-first-audible-playback-control-flow-layer_log.md](docs/devlog/20260614-issue34-audio-slice-c-first-audible-playback-control-flow-layer_log.md) | Slice C (HITL off-device layer): 5 new modules (`pcm_buffer`, `audio_ffi`, `wake_lock`, `decode_producer`, `output_pump`) + `ffmpeg_backend` wired for full transport orchestration (producer+pump+wake_lock) behind injectable device seams; dual position source keeps slice B's 45 tests green; 87 new tests (642 total); 4 AC device-only (HITL handoff doc included) |
 | 2026-06-14 | issue | [issue32-audio-slice-a-pure-audio-math-library_log.md](docs/devlog/20260614-issue32-audio-slice-a-pure-audio-math-library_log.md) | Pure FFmpeg math foundation (3 modules): `time_math.lua` (av_rescale_q, s↔ms, clamp), `ring_buffer.lua` (immutable PCM index math, 11 fns), `atempo.lua` (filter-chain builder w/ chaining); 53 new tests; 3 parallel TDD workers; slice A of PRD #31 audio backend
 | 2026-06-11 | issue | [issue23-extract-shared-fs-helpers-module_log.md](docs/devlog/20260611-issue23-extract-shared-fs-helpers-module_log.md) | Created fs_helpers.lua with mkdir_p/get_file_size/delete_file/delete_dir; replaced inline mkdir in cover_cache+book_detail; 12 new tests; 341 total pass |
 | 2026-06-11 | issue | [issue24-pcall-guard-abs-logger-require_log.md](docs/devlog/20260611-issue24-pcall-guard-abs-logger-require_log.md) | pcall-guarded require('logger') in abs_logger with print fallback; 3 new tests; 344 total pass |
@@ -118,7 +119,7 @@ They capture what was done, decisions & rationale, gotchas & fixes, and next ste
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **absaudio.koplugin** (831 symbols, 850 relationships, 0 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **absaudio.koplugin** (876 symbols, 898 relationships, 0 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 

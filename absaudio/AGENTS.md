@@ -61,9 +61,33 @@ All zero-dependency (no FFI, no KOReader globals, no I/O) — the deepest, most 
 - State: immutable `{capacity, write, read}` where `write`/`read` are absolute monotonic byte counters (only grow); `fill = write - read`; wraparound via `counter % capacity`
 - Public API: `new(capacity)`, `fill`, `free`, `empty`, `full`, `can_write(n)` (overrun check), `can_read(n)` (underrun check), `write(n)`/`read(n)` (return NEW state, error on overrun/underrun), `write_slot`/`read_slot`
 
+#### `pcm_buffer.lua` — mutable PCM byte storage (wraps ring_buffer)
+- Backing byte array + ring_buffer state (issue #34, audio slice C): the shared mutable buffer the decode producer writes to and the output pump reads from. `ring_buffer` deliberately stores no bytes; this module owns the backing array.
+- Public API: `new(capacity)`, `capacity/fill/free/empty/full`, `can_write(n)`, `can_read(n)`, `write(data_string)` (overrun error), `read(n)->string` (underrun error), `clear()`. Wraparound via `% capacity`.
+
 #### `atempo.lua` — FFmpeg atempo filter-chain builder
 - Builds valid `atempo` filter-chain strings for arbitrary playback speeds (issue #32, audio slice A). Single stage covers `[0.5, 2.0]`; out-of-range chains 2.0/0.5 stages (product of all stages == input speed)
 - Public API: `chain(speed)` → string (e.g. `"atempo=1.5"`, `"atempo=2,atempo=2"`); `STAGE_MIN = 0.5`, `STAGE_MAX = 2.0` constants. Errors if speed ≤ 0 or non-number. `%g` formatting mirrors `player.format_speed`
+
+### Audio pipeline — slice C (issue #34)
+
+Control-flow modules behind injectable interfaces so the full producer/consumer/wake-lock orchestration is unit-testable off-device with fakes. The device session fills the real FFmpeg/ALSA/inkview bodies into these seams.
+
+#### `audio_ffi.lua` — guarded FFI shim + availability probe
+- Declares FFmpeg/ALSA cdefs inside `pcall(ffi.cdef)` (guarded against redeclaration) + implements the real `is_available()` (dlopen `libaudio-engine` + all `KEY_SYMBOLS` resolve, memoized). False on dev; never crashes.
+- Public API: `is_available()`, `_set_probe_override(fn|nil)`, `KEY_SYMBOLS`. All symbol lookups are `pcall`-guarded (lesson from `IsPlayingMP3` probe crash). The real decode bodies are filled in the device session.
+
+#### `wake_lock.lua` — paired, idempotent firmware sleep-ban wrapper
+- Prevents PocketBook auto-suspend from stalling the output pump during long playback. Injectable `opts.impl = {acquire, release}`; default is a guarded inkview probe (`BanSleep`/`AllowSleep`, no-op on dev).
+- Public API: `new(opts)`, `acquire()` (idempotent — calls impl.acquire once per held period), `release()` (idempotent — no-op if not held), `is_held()`.
+
+#### `decode_producer.lua` — coroutine decode loop (injected decoder)
+- Opens a file via `opts.decoder_factory(path)`, decodes frames, writes PCM into a shared `pcm_buffer`, fires `on_position(ms)`/`on_finished()`/`on_error(err)`, yields on buffer-full or frame-quota for timeshare. The pump drives it via `:kick()`. Pure control flow — no FFI.
+- Public API: `new(opts)`, `start()`, `kick()`, `is_done()`, `status()`, `teardown()`.
+
+#### `output_pump.lua` — scheduled ~50ms drain (injected sink)
+- `opts.schedule` cadence drains `opts.buffer` to `opts.sink.write`, kicks the producer (backpressure), survives underrun (empty buffer → skip + reschedule), self-stops on producer-done + buffer-empty. Does NOT import decode_producer — receives it via `opts.producer`.
+- Public API: `new(opts)`, `start()`, `tick()`, `stop()`, `is_running()`.
 
 ### Playback backends
 
@@ -75,12 +99,13 @@ All three implement the **same backend contract** so `player.create()`'s strateg
 #### `inkview_backend.lua` — PocketBook inkview audio API (FFI)
 - Wraps `libinkview` playback via LuaJIT FFI; `is_available()` = guarded `ffi.load("inkview")`. DEPRECATED path: the inkview audio API is gutted on the PB700K3 (see decision log) — kept as a fallback, not the primary.
 
-#### `ffmpeg_backend.lua` — real FFmpeg+ALSA backend (skeleton, issue #33 / slice B)
+#### `ffmpeg_backend.lua` — real FFmpeg+ALSA backend (slice C: pipeline wired)
 - Backend for real in-app audio via `libaudio-engine.so` (FFmpeg decode + ALSA output), PRD #31 / decision log (Path C, Design 3 decoupled ring buffer).
-- **Slice B status**: transport state machine, position bookkeeping, and `is_available()` are REAL & fully unit-tested on the dev Mac. The FFI decode producer + ALSA output consumer are MOCKED (land in slices #34+).
-- Position tracked in ms (natural FFmpeg PTS unit); clamped via `time_math.clamp`, converted via `time_math.ms_to_seconds`/`seconds_to_ms`. Owns a `ring_buffer` (slice A) for the decoupled design (not fed by decode yet).
-- `is_available()` = guarded `pcall(ffi.load("audio-engine"))`, memoized; false on dev. Mockable via `ffmpeg_backend._set_probe_override(fn)` (module) or `opts.ffi_probe` (per-instance). Mirrors stub's real-time + `_advanceTime` time model so transport tests are shared.
-- **All FFI access must stay pcall-guarded** — a missing/undefined symbol must return `false`, never crash (lesson from the `IsPlayingMP3` probe crash).
+- **Slice C status**: full transport orchestration wired — `play()` starts producer + pump + wake-lock; `stop()`/`close()` tears all down. Dual position source: CLOCK mode (no `decoder_factory`, identical to stub — used by emulator/tests/slice B's 45 contract tests) or PRODUCER mode (`decoder_factory` provided — position from PTS via `on_position`, used by slice C integration tests + device). The real FFmpeg decode bodies + ALSA output are DEVICE-only (HITL).
+- Position tracked in ms (FFmpeg PTS unit); clamped via `time_math.clamp`, converted via `time_math.ms_to_seconds`. Owns a `pcm_buffer` (producer/pump storage) + a legacy `ring_buffer` (for `getRingBuffer()` backward compat).
+- `is_available()` delegates to `audio_ffi.is_available()` (guarded, memoized). Mockable via `_set_probe_override(fn)` or `opts.ffi_probe`.
+- **Slice C device seams** (opts, injected): `decoder_factory(path)→decoder`, `sink={write}`, `schedule(delay,fn)`, `wake_impl={acquire,release}`. The device session fills these with real FFmpeg/ALSA/inkview calls.
+- **All FFI access must stay pcall-guarded** — a missing/undefined symbol returns `false`, never crashes (lesson from the `IsPlayingMP3` probe crash).
 
 ## Work Guidance
 

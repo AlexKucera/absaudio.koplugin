@@ -1,42 +1,56 @@
--- FFmpeg playback backend for absaudio.koplugin (issue #33, audio slice B)
+-- FFmpeg playback backend for absaudio.koplugin (issue #33 skeleton, #34 pipeline wiring)
 --
--- Backend contract skeleton for real in-app audio on PocketBook via libaudio-engine.so
--- (FFmpeg decode + ALSA output). This slice implements the transport state machine,
--- position bookkeeping, and the is_available() selection hook — all fully unit-testable
--- on the dev Mac with the FFI decode/output layer MOCKED OUT. Real FFmpeg decode, the
--- ALSA output pump, and the atempo speed graph land in later slices (#34+).
+-- Backend for real in-app audio via libaudio-engine.so (FFmpeg decode + ALSA
+-- output), PRD #31 / decision log (Path C, Design 3 decoupled ring buffer).
 --
--- Implements the SAME public contract as stub_backend.lua / inkview_backend.lua so it
--- drops into player.create()'s strategy unchanged:
+-- Implements the SAME public contract as stub_backend.lua / inkview_backend.lua
+-- so it drops into player.create()'s strategy unchanged:
 --   ffmpeg_backend.new(opts) → backend instance
 --     play(), pause(), resume(), stop(), close()
 --     getPosition(), setPosition(sec), getDuration()
 --     getCurrentTrack(), getPlaybackSpeed(), setPlaybackSpeed(speed)
 --     isFinished(), getState()
---   ffmpeg_backend.is_available() → bool   (guarded FFI probe; false on dev)
+--     getLastError()  (slice C: surfaces undecodable-file errors)
+--   ffmpeg_backend.is_available() → bool   (guarded FFI probe via audio_ffi; false on dev)
+--
+-- TWO position modes (dual source — keeps slice B green):
+--   * CLOCK mode (no decoder_factory): wall-clock + _advanceTime, identical to
+--     stub_backend. Used by the emulator, tests, and slice B's 45 contract tests.
+--   * PRODUCER mode (decoder_factory provided): a decode_producer coroutine +
+--     output_pump + wake_lock pipeline. Position comes from the producer's PTS
+--     via on_position(ms). Used by slice C integration tests and (with the real
+--     FFmpeg decoder_factory) on the device.
 --
 -- opts:
 --   track_durations   array    duration of each track in seconds
---   file_paths        array    filesystem path for each track (unused by mocked decode)
+--   file_paths        array    filesystem path for each track (first used for decode)
 --   start_position    number   initial position in seconds (default 0)
 --   playback_speed    number   speed multiplier (default 1.0)
 --   on_finished       fn       callback(final_position_seconds) when playback reaches end
 --   buffer_capacity   number   PCM ring-buffer capacity in bytes (default 1<<20 ≈ 1 MiB)
 --   ffi_probe         fn       override is_available() probe for tests
+--   --- slice C pipeline opts (when provided, enables PRODUCER mode) ---
+--   decoder_factory   fn(path)→decoder|nil,err   [the device seam; tests inject fakes]
+--   sink              {write=fn(data,n)}          [ALSA on device; fake in tests]
+--   schedule          fn(delay,fn)→cancel_fn      [UIManager:scheduleIn on device]
+--   wake_impl         {acquire=fn,release=fn}     [inkview BanSleep on device]
+--   chunk_size        number   bytes per pump tick (default 4096)
 --
--- Position bookkeeping delegates to slice A's pure library (time_math): the internal
--- position is tracked in milliseconds (the natural FFmpeg PTS unit) and converted to
--- seconds via time_math.ms_to_seconds(), clamped to duration via time_math.clamp(). A
--- ring_buffer (also slice A) is instantiated at construction for the decoupled
--- decode/output design; decode does not feed it yet (mocked).
---
--- Time mode mirrors stub_backend: real-time wall-clock for emulator use, or a
--- manually-advanced virtual clock for tests (after _advanceTime is called).
+-- Position bookkeeping delegates to slice A's pure library (time_math): the
+-- internal position is tracked in milliseconds (the natural FFmpeg PTS unit)
+-- and converted to seconds via time_math.ms_to_seconds(), clamped to duration
+-- via time_math.clamp(). The pcm_buffer (wrapping ring_buffer) is the mutable
+-- storage shared by the producer and pump.
 --
 -- Transport state machine: "stopped" | "playing" | "paused"
 
 local time_math = require("absaudio/time_math")
 local ring_buffer = require("absaudio/ring_buffer")
+local pcm_buffer = require("absaudio/pcm_buffer")
+local audio_ffi = require("absaudio/audio_ffi")
+local decode_producer = require("absaudio/decode_producer")
+local output_pump = require("absaudio/output_pump")
+local wake_lock = require("absaudio/wake_lock")
 
 ------------------------------------------------------------------------
 -- Wall-clock resolver: prefer KOReader's high-resolution time module,
@@ -54,50 +68,23 @@ do
     end
 end
 
-------------------------------------------------------------------------
--- Default is_available() probe: guarded FFI load of the PocketBook audio toolkit.
--- Returns true only if libaudio-engine.so loads (device); false on the dev Mac.
--- All FFI access is pcall-guarded so a missing/undefined symbol never crashes
--- (lesson from the IsPlayingMP3 probe crash).
--- The real cdef + key-symbol validation lands in the FFI cdef slice (#34); here
--- a successful library load is a sufficient "available" signal.
-------------------------------------------------------------------------
-local default_ffi_probe
-do
-    local probed = false
-    local available = false
-    default_ffi_probe = function()
-        if probed then return available end
-        probed = true
-        local ok_ffi, ffi = pcall(require, "ffi")
-        if not ok_ffi then available = false return false end
-        -- ffi.load is pcall-guarded: a missing .so errors rather than crashes
-        local lib_ok = pcall(function() ffi.load("audio-engine") end)
-        available = lib_ok and true or false
-        return available
-    end
-end
-
 local ffmpeg_backend = {}
-
--- Module-level probe override (for tests / forced device mode).
-local probe_override = nil
 
 ------------------------------------------------------------------------
 -- Whether the FFmpeg backend can run in the current environment.
--- False on the dev Mac; true on a PocketBook once libaudio-engine.so loads.
--- Mockable: set ffmpeg_backend._set_probe_override(fn) or pass opts.ffi_probe.
+-- Delegates to audio_ffi (guarded dlopen libaudio-engine + key-symbol check).
+-- False on the dev Mac; true on a PocketBook once the toolkit loads.
+-- Mockable: ffmpeg_backend._set_probe_override(fn) or pass opts.ffi_probe.
 -- @return bool
 ------------------------------------------------------------------------
 function ffmpeg_backend.is_available()
-    if probe_override then return probe_override() end
-    return default_ffi_probe()
+    return audio_ffi.is_available()
 end
 
--- Test-only: override the module-level availability probe.
+-- Test-only: override the module-level availability probe (delegates to audio_ffi).
 -- @param fn function|nil  nil restores the default guarded probe
 function ffmpeg_backend._set_probe_override(fn)
-    probe_override = fn
+    audio_ffi._set_probe_override(fn)
 end
 
 ------------------------------------------------------------------------
@@ -115,6 +102,14 @@ function ffmpeg_backend.new(opts)
     local buffer_capacity = opts.buffer_capacity or (1024 * 1024)
     local ffi_probe = opts.ffi_probe
 
+    -- Slice C pipeline opts (absent → CLOCK mode, slice B behavior unchanged)
+    local decoder_factory = opts.decoder_factory
+    local sink = opts.sink
+    local schedule = opts.schedule
+    local wake_impl = opts.wake_impl
+    local chunk_size = opts.chunk_size or 4096
+    local path = file_paths and file_paths[1]  -- first track (multi-track in a later slice)
+
     -- Total duration (seconds)
     local total_duration = 0
     for _, d in ipairs(track_durations) do
@@ -122,24 +117,51 @@ function ffmpeg_backend.new(opts)
     end
     local duration_ms = time_math.seconds_to_ms(total_duration)
 
-    -- Ring buffer for the decoupled decode/output design (mocked this slice)
+    -- Ring buffer (slice A pure index math — kept for getRingBuffer backward compat)
     local rb = ring_buffer.new(buffer_capacity)
+
+    -- PCM buffer (slice C — the mutable storage producer/pump actually use)
+    local pcm_buf = pcm_buffer.new(buffer_capacity)
 
     -- Transport state
     local state = "stopped"
     local position_ms = time_math.seconds_to_ms(start_position)
     local finished = false
+    local last_error = nil
 
-    -- Time tracking: real-time mode (emulator) and manual mode (tests)
+    -- Clock tracking: real-time mode (emulator) and manual mode (tests)
     local use_real_time = true   -- false once _advanceTime is called
     local sim_time = 0           -- manual virtual clock (seconds, tests)
     local play_start_sim = 0
     local play_start_real = 0
 
+    -- Producer/pump pipeline state (slice C; only active in PRODUCER mode)
+    local producer_active = false      -- true when the pipeline is driving playback
+    local producer_position_ms = nil   -- last PTS reported by the producer
+    local producer_errored = false     -- distinguishes error-finish from clean-finish
+    local pipeline_ended = false       -- idempotent guard for handle_pipeline_end
+    local producer = nil
+    local pump = nil
+    local lock = nil
+
     ----------------------------------------------------------------
-    -- Internal helpers
+    -- Internal helpers (forward-declared for mutual reference)
     ----------------------------------------------------------------
-    local function effective_position_ms()
+    local effective_position_ms
+    local check_auto_finish
+    local rebase_clock
+    local start_pipeline
+    local stop_pipeline
+    local handle_pipeline_end
+
+    ----------------------------------------------------------------
+    -- Dual-source position: producer PTS takes precedence when active,
+    -- otherwise the clock model (unchanged from slice B).
+    ----------------------------------------------------------------
+    effective_position_ms = function()
+        if producer_active and producer_position_ms ~= nil then
+            return time_math.clamp(producer_position_ms, duration_ms)
+        end
         if state == "playing" then
             local elapsed
             if use_real_time then
@@ -154,7 +176,7 @@ function ffmpeg_backend.new(opts)
         end
     end
 
-    local function check_auto_finish()
+    check_auto_finish = function()
         if duration_ms <= 0 then return false end
         local eff = effective_position_ms()
         if eff >= duration_ms then
@@ -170,9 +192,74 @@ function ffmpeg_backend.new(opts)
     end
 
     -- Snapshot the clock baseline so effective_position_ms() measures elapsed from now.
-    local function rebase_clock()
+    rebase_clock = function()
         play_start_sim = sim_time
         play_start_real = get_wall_time()
+    end
+
+    ----------------------------------------------------------------
+    -- Pipeline lifecycle (slice C — only used in PRODUCER mode)
+    ----------------------------------------------------------------
+
+    -- Idempotent: tear down pump + producer + wake-lock, then finalize state.
+    -- Called from on_drained (natural finish) or on_error (undecodable file).
+    handle_pipeline_end = function()
+        if pipeline_ended then return end
+        pipeline_ended = true
+        if pump then pump:stop() end
+        if producer then producer:teardown() end
+        if lock then lock:release() end
+        producer_active = false
+        state = "stopped"
+        if producer_errored then
+            -- Error path: do NOT mark finished, do NOT fire on_finished.
+            -- The error is retrievable via getLastError().
+        else
+            -- Clean finish: mark finished + fire callback.
+            finished = true
+            position_ms = duration_ms
+            if on_finished then
+                on_finished(time_math.ms_to_seconds(duration_ms))
+            end
+        end
+    end
+
+    start_pipeline = function()
+        pcm_buf:clear()
+        pipeline_ended = false
+        producer_errored = false
+        producer_position_ms = nil
+        lock = wake_lock.new({ impl = wake_impl })
+        producer = decode_producer.new({
+            decoder_factory = decoder_factory,
+            path = path,
+            buffer = pcm_buf,
+            on_position = function(ms) producer_position_ms = ms end,
+            on_finished = function() producer_errored = false end,
+            on_error = function(err)
+                last_error = err
+                producer_errored = true
+                handle_pipeline_end()
+            end,
+        })
+        pump = output_pump.new({
+            buffer = pcm_buf,
+            sink = sink,
+            producer = producer,
+            schedule = schedule,
+            chunk_size = chunk_size,
+            on_drained = function() handle_pipeline_end() end,
+        })
+        lock:acquire()
+        producer:start()
+        pump:start()
+    end
+
+    stop_pipeline = function()
+        if pump then pump:stop(); pump = nil end
+        if producer then producer:teardown(); producer = nil end
+        if lock then lock:release(); lock = nil end
+        producer_active = false
     end
 
     ----------------------------------------------------------------
@@ -181,6 +268,7 @@ function ffmpeg_backend.new(opts)
     local self = {}
 
     function self:getState() return state end
+    function self:getLastError() return last_error end
     function self:getCurrentTrack()
         if state == "stopped" then return 0 end
         local player_mod = require("absaudio/player")
@@ -190,7 +278,7 @@ function ffmpeg_backend.new(opts)
     end
     function self:getPlaybackSpeed() return playback_speed end
     function self:setPlaybackSpeed(speed)
-        if state == "playing" then
+        if state == "playing" and not producer_active then
             position_ms = effective_position_ms()
             rebase_clock()
         end
@@ -203,10 +291,15 @@ function ffmpeg_backend.new(opts)
         local sec = global_seconds or 0
         if sec < 0 then sec = 0 end
         position_ms = time_math.clamp(time_math.seconds_to_ms(sec), duration_ms)
-        if state == "playing" then
+        if producer_active then
+            producer_position_ms = position_ms
+        end
+        if state == "playing" and not producer_active then
             rebase_clock()
         end
-        check_auto_finish()
+        if not producer_active then
+            check_auto_finish()
+        end
     end
     function self:getDuration() return total_duration end
     function self:isFinished() return finished end
@@ -224,6 +317,28 @@ function ffmpeg_backend.new(opts)
 
     function self:play()
         if state == "playing" then return end
+        -- PRODUCER mode: start the decode/output/wake-lock pipeline
+        if decoder_factory and path and not producer_active then
+            local ok, err = pcall(start_pipeline)
+            if not ok then
+                last_error = tostring(err)
+                producer_errored = true
+                pipeline_ended = true
+                if lock then lock:release() end
+                producer_active = false
+                state = "stopped"
+                return
+            end
+            if producer_errored then
+                -- start_pipeline → producer:start() hit on_error (e.g. open fail).
+                -- handle_pipeline_end already set state=stopped.
+                return
+            end
+            producer_active = true
+            state = "playing"
+            return
+        end
+        -- CLOCK mode (slice B behavior, unchanged)
         position_ms = effective_position_ms()
         rebase_clock()
         state = "playing"
@@ -232,23 +347,39 @@ function ffmpeg_backend.new(opts)
 
     function self:pause()
         if state ~= "playing" then return end
-        position_ms = effective_position_ms()
+        if producer_active and pump then
+            pump:stop()  -- pause output drain (producer yields on buffer-full)
+        elseif not producer_active then
+            position_ms = effective_position_ms()
+        end
         state = "paused"
     end
 
     function self:resume()
         if state ~= "paused" then return end
-        rebase_clock()
+        if producer_active and pump then
+            pump:start()  -- resume output drain
+        elseif not producer_active then
+            rebase_clock()
+        end
         state = "playing"
-        check_auto_finish()
+        if not producer_active then
+            check_auto_finish()
+        end
     end
 
     function self:stop()
+        if producer_active then
+            stop_pipeline()
+        end
         state = "stopped"
         position_ms = 0
     end
 
     function self:close()
+        if producer_active then
+            stop_pipeline()
+        end
         state = "stopped"
         position_ms = 0
         finished = false
@@ -256,6 +387,7 @@ function ffmpeg_backend.new(opts)
         sim_time = 0
         play_start_sim = 0
         play_start_real = 0
+        last_error = nil
     end
 
     return self
