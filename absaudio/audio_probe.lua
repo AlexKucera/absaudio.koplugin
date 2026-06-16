@@ -1243,4 +1243,193 @@ function audio_probe.run_play_test()
     return write_report()
 end
 
+-- ====================================================================
+-- Backend readiness probe (issue #39 / slice D).
+--
+-- GOAL: answer the ONE question that decides whether the play button will
+-- actually use the FFmpeg backend (not silently fall back to stub): does
+-- audio_ffi.is_available() return true, and does audio_device.create_decoder()
+-- decode real frames from a downloaded M4B?
+--
+-- This is amplifier-safe: it does NOT open ALSA, so there is no risk of a
+-- bad pointer in the output sink crashing the device. It tests exactly the
+-- chain the play button's auto-detect depends on:
+--
+--   1. audio_ffi.is_available()  <- the gate (false => silent stub fallback)
+--   2. audio_ffi.get_lib()       <- lib load
+--   3. declare_cdefs parse       <- the expanded struct layouts (redecl guard)
+--   4. find a downloaded M4B     <- reuse find_test_m4b
+--   5. audio_device.create_decoder()  <- the real new decode loop
+--   6. read 3 frames             <- verify pcm bytes + advancing pts
+--   7. get_duration_ms()         <- the UNVERIFIED @72 offset
+--
+-- Writes the report to REPORT_PATH and returns it. NEVER emits sound.
+-- ====================================================================
+function audio_probe.run_backend_readiness_probe()
+    local lines = {}
+    local function out(s) table.insert(lines, tostring(s)) end
+    local function section(t) out(""); out("==== " .. t .. " ====") end
+    local function write_report()
+        local report = table.concat(lines, "\n") .. "\n"
+        local rf = io.open(audio_probe.REPORT_PATH, "w")
+        if rf then rf:write(report); rf:close() end
+        return report
+    end
+
+    out("absaudio backend readiness probe v1 (issue #39 / slice D)")
+    out("run: " .. os.date("%Y-%m-%d %H:%M:%S"))
+    out("(amplifier-safe: NO ALSA access, NO sound emitted)")
+
+    -- Wrap everything so a Lua error still produces a report.
+    local ok, err = pcall(function()
+        local ffi = require("ffi")
+        -- ---- 1. is_available() — the gate ----
+        section("1. is_available() — the play-button gate")
+        local affi_ok, affi = pcall(require, "absaudio/audio_ffi")
+        if not affi_ok then
+            out("FATAL: require('absaudio/audio_ffi') failed: " .. tostring(affi))
+            out("")
+            out("=> is_available: UNKNOWN (module failed to load)")
+            out("=> PLAY BUTTON WILL FALL BACK TO STUB (no sound, no error)")
+            return
+        end
+        local avail_ok, avail = pcall(affi.is_available)
+        avail = avail_ok and avail or false
+        out(string.format("is_available() = %s", avail and "TRUE" or "FALSE"))
+        if not avail then
+            out("")
+            out("=> PLAY BUTTON WILL FALL BACK TO STUB MODE (no sound, no error).")
+            out("   The expanded struct cdefs or a KEY_SYMBOL likely failed to resolve.")
+            out("   See section 2/3 below for the exact reason.")
+        else
+            out("")
+            out("=> PLAY BUTTON WILL USE THE FFMPEG BACKEND.")
+        end
+
+        -- ---- 2. get_lib() — lib load ----
+        section("2. get_lib() — libaudio-engine load")
+        local lib_ok, lib = pcall(affi.get_lib)
+        if not lib_ok or not lib then
+            out(string.format("get_lib() = nil  (load failed: %s)", tostring(lib)))
+            out("=> ffi.load('audio-engine') did not return a handle.")
+            return
+        end
+        out(string.format("get_lib() = 0x%x  OK", tonumber(ffi.cast("uintptr_t", lib)) or 0))
+
+        -- ---- 3. declare_cdefs parse — expanded struct layouts ----
+        section("3. declare_cdefs() — expanded struct cdef parse")
+        local cdef_ok, cdef_err = pcall(function() affi.declare_cdefs(ffi) end)
+        if not cdef_ok then
+            out("FAILED: " .. tostring(cdef_err))
+            out("=> The expanded FFmpeg struct layouts failed to parse.")
+            out("   This is why is_available() would return false (get_lib calls it).")
+            return
+        end
+        out("OK — all struct cdefs parsed (or were already declared).")
+        -- Spot-check one on-device-verified offset to confirm the struct is usable.
+        local off_ok, off_pts = pcall(function() return ffi.offsetof("struct AVFrame", "pts") end)
+        if off_ok then
+            out(string.format("ffi.offsetof(AVFrame, pts) = %s  (expected 192)",
+                tostring(off_pts)))
+        else
+            out("ffi.offsetof(AVFrame, pts) FAILED: " .. tostring(off_pts))
+        end
+
+        -- ---- 4. find a downloaded M4B ----
+        section("4. find a downloaded test M4B")
+        local test_file, search_info = find_test_m4b()
+        if not test_file then
+            out("NO TEST FILE FOUND.")
+            if search_info.dir then out("  searched: " .. search_info.dir) end
+            if search_info.error then out("  error: " .. search_info.error) end
+            out("=> Download a book first, then re-run this probe to test decode.")
+            return
+        end
+        out("test file: " .. test_file)
+
+        -- ---- 5. audio_device.create_decoder() — the real new decode loop ----
+        section("5. audio_device.create_decoder() — real decode")
+        local ad_ok, ad = pcall(require, "absaudio/audio_device")
+        if not ad_ok then
+            out("FATAL: require('absaudio/audio_device') failed: " .. tostring(ad))
+            return
+        end
+        local dec, derr = ad.create_decoder(test_file)
+        if not dec then
+            out(string.format("create_decoder FAILED: %s", tostring(derr)))
+            out("=> FFmpeg open/codec/swr setup failed on this file.")
+            out("   (A native SIGSEGV is NOT catchable — if the device froze, a bad")
+            out("   struct offset was dereferenced. Check the offsets in audio_ffi.lua.)")
+            return
+        end
+        out("create_decoder() = OK  (decoder object returned)")
+        local sr_ok, sr = pcall(dec.get_sample_rate, dec)
+        local ch_ok, ch = pcall(dec.get_channels, dec)
+        out(string.format("  sample_rate = %s  channels = %s",
+            sr_ok and tostring(sr) or "?", ch_ok and tostring(ch) or "?"))
+
+        -- ---- 6. read 3 frames ----
+        section("6. read_frame() — decode 3 frames (pcm + advancing pts)")
+        local frames_ok = 0
+        for i = 1, 3 do
+            local f, ferr = dec:read_frame()
+            if f == nil and not ferr then
+                out(string.format("  frame %d: EOF (no more frames)", i))
+                break
+            end
+            if ferr then
+                out(string.format("  frame %d: ERROR %s", i, tostring(ferr)))
+                break
+            end
+            frames_ok = frames_ok + 1
+            out(string.format("  frame %d: %d pcm bytes, pts_ms=%s",
+                i, #f.pcm, tostring(f.pts_ms)))
+        end
+        if frames_ok == 0 then
+            out("=> DECODER RETURNED NO FRAMES. Decode loop is broken.")
+        elseif frames_ok < 3 then
+            out(string.format("=> Only %d frame(s) decoded before EOF (file may be very short).", frames_ok))
+        else
+            out(string.format("=> %d frames decoded with valid PCM. Decode loop works.", frames_ok))
+        end
+
+        -- ---- 7. get_duration_ms() — the UNVERIFIED @72 offset ----
+        section("7. get_duration_ms() — UNVERIFIED duration@72 offset")
+        local dur_ok, dur = pcall(dec.get_duration_ms, dec)
+        dur = dur_ok and tonumber(dur) or nil
+        if not dur or dur <= 0 then
+            out(string.format("get_duration_ms() = %s  (0/nil — offset may be wrong)", tostring(dur)))
+            out("=> Non-fatal: position bar total length may be wrong, but playback works.")
+        else
+            local sec = math.floor(dur / 1000)
+            out(string.format("get_duration_ms() = %d ms (%dh %02dm %02ds) — looks sane",
+                dur, math.floor(sec/3600), math.floor((sec%3600)/60), sec%60))
+            out("=> duration@72 offset confirmed working.")
+        end
+
+        dec:close()
+
+        -- ---- 8. VERDICT ----
+        section("8. VERDICT")
+        if avail and frames_ok > 0 then
+            out("=> BACKEND READY: play button will use FFmpeg and decode works.")
+            out("   Next: run 'Audio play-test' to confirm audible output via ALSA,")
+            out("   then press play on a downloaded book.")
+        elseif avail then
+            out("=> PARTIAL: is_available() is true but decode produced no frames.")
+            out("   Fix the decode loop (section 6) before testing playback.")
+        else
+            out("=> NOT READY: is_available() is false — play button uses stub.")
+            out("   See section 2/3 for the blocker before any decode testing.")
+        end
+    end)
+
+    if not ok then
+        out("")
+        out("==== PROBE CRASHED (uncaught Lua error) ====")
+        out(tostring(err))
+    end
+    return write_report()
+end
+
 return audio_probe

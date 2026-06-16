@@ -439,11 +439,13 @@ run_test("addToMainMenu creates absaudio menu with Open dashboard and Settings",
 
     mock.assert_equals(menu_items.absaudio ~= nil, true, "should create absaudio menu entry")
     mock.assert_equals(menu_items.absaudio.text, "ABS Audio", "menu text should be 'ABS Audio'")
-    mock.assert_equals(#menu_items.absaudio.sub_item_table, 6, "should have 6 sub-items (dashboard, settings, audio probe, capability scan, decode probe, play-test)")
+    mock.assert_equals(#menu_items.absaudio.sub_item_table, 3, "should have 3 sub-items (dashboard, settings, readiness probe)")
     mock.assert_equals(menu_items.absaudio.sub_item_table[1].text, "Open dashboard",
         "first item should be 'Open dashboard'")
     mock.assert_equals(menu_items.absaudio.sub_item_table[2].text, "Settings",
         "second item should be 'Settings'")
+    mock.assert_equals(menu_items.absaudio.sub_item_table[3].text, "Audio backend readiness probe",
+        "third item should be 'Audio backend readiness probe'")
 end)
 
 -- ============================================================
