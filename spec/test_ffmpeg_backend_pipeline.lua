@@ -82,8 +82,11 @@ end
 -- Fake sink: records written chunks.
 local function fake_sink()
     local writes = {}
+    local closed = false
     return {
         write = function(data, n) table.insert(writes, { data = data, n = n }) end,
+        close = function() closed = true end,
+        is_closed = function() return closed end,
         writes = writes,
         total_bytes = function()
             local t = 0
@@ -262,7 +265,7 @@ end)
 -- Slice 5: producer-driven position reflects PTS via on_position
 -- ============================================================
 
-run_test("getPosition reflects producer PTS during playback", function()
+run_test("getPosition reflects clock-based position (NOT decode-ahead PTS) during playback", function()
     local b, sched = make_pipeline_backend({
         track_durations = { 10 },
         buffer_capacity = 16,   -- small: producer yields on buffer-full before finishing
@@ -274,14 +277,78 @@ run_test("getPosition reflects producer PTS during playback", function()
             { pcm = string.rep("A", 8), pts_ms = 4000 },
         },
     })
+    b:_advanceTime(0)  -- switch to sim clock mode for deterministic testing
     b:play()
-    -- Producer decoded 2 frames (16-byte buffer full), then frame 3 fired
-    -- on_position(3000) before yielding on buffer-full.
-    mock.assert_equals(b:getPosition(), 3, "position is 3s after initial decode")
-    -- Pump step: drains 8 bytes, kicks producer → writes frame 3, then frame 4
-    -- fires on_position(4000) before yielding again.
-    sched.step()
-    mock.assert_equals(b:getPosition(), 4, "position advanced to 4s after pump step")
+    -- Position is 0s at play start. The producer has decoded ahead (PTS
+    -- 3000-4000ms via on_position), but position MUST NOT reflect that —
+    -- decode-ahead PTS is ~12s ahead of actual playback. Clock-based position
+    -- starts at 0 and advances at realtime.
+    mock.assert_equals(b:getPosition(), 0, "position is 0s at play start, not decode-ahead PTS")
+    -- Advance the clock 5 seconds. Position reflects elapsed time.
+    b:_advanceTime(5)
+    mock.assert_equals(b:getPosition(), 5, "position advanced to 5s via clock, not producer PTS")
+    b:close()
+end)
+
+run_test("pause snapshots clock position; resume continues from snapshot", function()
+    local b, sched = make_pipeline_backend({
+        track_durations = { 60 },
+        frames = {
+            { pcm = string.rep("A", 8), pts_ms = 1000 },
+            { pcm = string.rep("B", 8), pts_ms = 2000 },
+        },
+    })
+    b:_advanceTime(0)
+    b:play()
+    b:_advanceTime(5)
+    mock.assert_equals(b:getPosition(), 5, "position is 5s during playback")
+    b:pause()
+    -- After pause, position is snapshotted — clock advances but position frozen
+    b:_advanceTime(10)
+    mock.assert_equals(b:getPosition(), 5, "position frozen at 5s while paused")
+    b:resume()
+    -- After resume, position continues from the 5s snapshot
+    b:_advanceTime(3)
+    mock.assert_equals(b:getPosition(), 8, "position is 8s after 3s of playback post-resume")
+    b:close()
+end)
+
+run_test("stop() closes the ALSA sink (prevents PCM handle leak / EBUSY on replay)", function()
+    -- Regression: stop_pipeline() used to never call sink.close(), so every
+    -- play->stop leaked one snd_pcm handle. The next snd_pcm_open() returned
+    -- -16 (EBUSY) -> permanent silence. stop() MUST close the sink.
+    local b, sched, sink = make_pipeline_backend({
+        frames = {
+            { pcm = string.rep("A", 8), pts_ms = 1000 },
+            { pcm = string.rep("B", 8), pts_ms = 2000 },
+        },
+    })
+    b:play()
+    mock.assert_equals(false, sink.is_closed(), "sink NOT closed during playback")
+    b:stop()
+    mock.assert_equals(true, sink.is_closed(), "sink closed after stop() (no leak)")
+    b:close()
+end)
+
+run_test("close() closes the sink even if not stopped first", function()
+    local b, sched, sink = make_pipeline_backend({
+        frames = { { pcm = string.rep("A", 8), pts_ms = 1000 } },
+    })
+    b:play()
+    mock.assert_equals(false, sink.is_closed(), "sink NOT closed during playback")
+    b:close()  -- close without explicit stop
+    mock.assert_equals(true, sink.is_closed(), "sink closed after close() (no leak)")
+end)
+
+run_test("pause() does NOT close the sink (stays open for resume)", function()
+    local b, sched, sink = make_pipeline_backend({
+        frames = { { pcm = string.rep("A", 8), pts_ms = 1000 } },
+    })
+    b:play()
+    b:pause()
+    mock.assert_equals(false, sink.is_closed(), "sink stays open across pause (for resume)")
+    b:stop()
+    mock.assert_equals(true, sink.is_closed(), "sink closed after stop")
     b:close()
 end)
 

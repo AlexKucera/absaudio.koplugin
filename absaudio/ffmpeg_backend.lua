@@ -107,7 +107,12 @@ function ffmpeg_backend.new(opts)
     local sink = opts.sink
     local schedule = opts.schedule
     local wake_impl = opts.wake_impl
-    local chunk_size = opts.chunk_size or 4096
+    -- Bytes drained per pump tick. MUST deliver faster than playback consumes
+    -- or ALSA underruns. 22050Hz/stereo/S16 = 88,200 bytes/s; at 50ms ticks a
+    -- 4096 chunk only delivers 81,920 bytes/s (underfeed → underrun). 8192
+    -- delivers up to 163,840 bytes/s (~1.9x headroom) so the ALSA buffer stays
+    -- topped up; the sink recovers from any residual underrun via prepare().
+    local chunk_size = opts.chunk_size or 8192
     local path = file_paths and file_paths[1]  -- first track (multi-track in a later slice)
 
     ----------------------------------------------------------------
@@ -195,14 +200,12 @@ function ffmpeg_backend.new(opts)
     local stop_pipeline
     local handle_pipeline_end
 
-    ----------------------------------------------------------------
-    -- Dual-source position: producer PTS takes precedence when active,
-    -- otherwise the clock model (unchanged from slice B).
-    ----------------------------------------------------------------
+    -- Clock-based position: position_ms + elapsed*speed. Always used, even in
+    -- producer mode — producer_position_ms reflects the decode-AHEAD position
+    -- (producer fills a 1 MiB buffer ahead of playback), not the playback
+    -- position, making it unsuitable for progress display. The clock is
+    -- accurate for forward playback and handles pause/resume via snapshots.
     effective_position_ms = function()
-        if producer_active and producer_position_ms ~= nil then
-            return time_math.clamp(producer_position_ms, duration_ms)
-        end
         if state == "playing" then
             local elapsed
             if use_real_time then
@@ -297,7 +300,13 @@ function ffmpeg_backend.new(opts)
     end
 
     stop_pipeline = function()
-        if pump then pump:stop(); pump = nil end
+        if pump then pump:stop(); pump = nil end   -- cancel ticks BEFORE closing sink
+        -- CRITICAL: close the ALSA sink so snd_pcm_close() releases the device.
+        -- Without this, every play->stop leaks one PCM handle and the next
+        -- snd_pcm_open() returns -16 (EBUSY) -> permanent silence. pause()
+        -- does NOT call stop_pipeline (only pump:stop), so the sink stays
+        -- open across pause/resume -- correct.
+        if sink and sink.close then pcall(sink.close) end
         if producer then producer:teardown(); producer = nil end
         if lock then lock:release(); lock = nil end
         producer_active = false
@@ -376,6 +385,7 @@ function ffmpeg_backend.new(opts)
                 return
             end
             producer_active = true
+            rebase_clock()  -- set play_start_real so clock-mode position advances
             state = "playing"
             return
         end
@@ -388,20 +398,18 @@ function ffmpeg_backend.new(opts)
 
     function self:pause()
         if state ~= "playing" then return end
+        position_ms = effective_position_ms()  -- snapshot clock (ALWAYS, not just clock mode)
         if producer_active and pump then
             pump:stop()  -- pause output drain (producer yields on buffer-full)
-        elseif not producer_active then
-            position_ms = effective_position_ms()
         end
         state = "paused"
     end
 
     function self:resume()
         if state ~= "paused" then return end
+        rebase_clock()  -- ALWAYS rebase (not just clock mode)
         if producer_active and pump then
             pump:start()  -- resume output drain
-        elseif not producer_active then
-            rebase_clock()
         end
         state = "playing"
         if not producer_active then

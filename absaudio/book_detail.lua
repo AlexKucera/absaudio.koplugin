@@ -701,14 +701,20 @@ function BookDetailView:_scheduleNextPlaybackUpdate()
         self._playback_update_scheduled = false
         return
     end
-    UIManager:scheduleIn(0.5, function()
-        self:_updatePlaybackDisplay()
+    -- Progress repaint cadence: every 1.0s. E-ink forces a full flash every
+    -- ~10 partial frames, so slower cadence = less frequent flashing (was 0.5s
+    -- = flash every 5s; 1.0s pushes it to ~10s). Audio survives flashes via the
+    -- 1s ALSA buffer (audio_device ALSA_LATENCY_US).
+    UIManager:scheduleIn(1.0, function()
+        -- Guard: view may have been closed/destroyed between ticks.
+        if not self.player then self:_stopPlaybackUpdates() return end
         -- Check for auto-finish
         if self.player:isFinished() then
             self:_stopPlaybackUpdates()
             self:_updatePlaybackDisplay()  -- final update showing finished state
             return
         end
+        self:_updatePlaybackDisplay()  -- refresh timer/progress bar each tick
         self:_scheduleNextPlaybackUpdate()
     end)
 end

@@ -64,6 +64,9 @@ audio_ffi.KEY_SYMBOLS = {
     "snd_pcm_writei",
     "snd_pcm_drain",
     "snd_pcm_close",
+    "snd_pcm_prepare",
+    "snd_pcm_resume",
+    "snd_strerror",
 }
 
 ------------------------------------------------------------------------
@@ -216,6 +219,7 @@ local ALSA_CDEFS = [[
                            int soft_resample, unsigned int latency);
     long snd_pcm_writei(snd_pcm_t *pcm, const void *buffer, unsigned long size);
     int snd_pcm_prepare(snd_pcm_t *pcm);
+    int snd_pcm_resume(snd_pcm_t *pcm);
     int snd_pcm_drain(snd_pcm_t *pcm);
     int snd_pcm_close(snd_pcm_t *pcm);
     const char *snd_strerror(int err);
@@ -308,6 +312,13 @@ end
 -- @param fn function|nil  fn() -> bool overrides; nil restores the default probe
 function audio_ffi._set_probe_override(fn)
     probe_override = fn
+end
+
+-- Test-only: inject a fake lib table (or nil to restore default probing).
+-- Lets off-device tests exercise create_alsa_sink / create_decoder paths that
+-- otherwise bail at get_lib(). Mirrors _set_probe_override.
+function audio_ffi._set_lib_for_testing(lib)
+    _lib_cache = lib
 end
 
 return audio_ffi

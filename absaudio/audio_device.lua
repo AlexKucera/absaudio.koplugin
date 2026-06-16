@@ -30,6 +30,14 @@
 
 local audio_ffi = require("absaudio/audio_ffi")
 local time_math = require("absaudio/time_math")
+local logger  -- lazy: pcall-guarded so off-device tests don't crash
+do
+    local ok, l = pcall(require, "logger")
+    logger = ok and l or {
+        warn = function(...) print("[WARN] " .. string.format(...)) end,
+        info = function(...) print("[INFO] " .. string.format(...)) end,
+    }
+end
 
 local audio_device = {}
 
@@ -48,8 +56,22 @@ local SND_PCM_ACCESS_RW_INTERLEAVED = 3
 
 -- Confirmed real hardware device (tts_sm is a virtual sink that swallows audio).
 -- First entry is the proven device; the rest are fallbacks (probe tried these).
-local ALSA_DEVICES = { "plughw:0,0", "hw:0,0", "default" }
-local ALSA_LATENCY_US = 500000  -- 0.5s
+-- PocketBook runs an `alsaloop` daemon at boot that grabs the hardware
+-- audio device (hw:0,0) exclusively and bridges it: it captures from the
+-- ALSA Loopback card (card 1) device 1, and plays to the speaker. User apps
+-- are meant to write to the Loopback device 0 playback side — the cross-
+-- connected pair feeds alsaloop's capture. Writing to plughw:0,0 directly
+-- fails with EBUSY because alsaloop holds it.
+local ALSA_DEVICES = {
+    "plughw:1,0",       -- Loopback card 1, dev 0 (feeds alsaloop capture from dev 1)
+    "hw:1,0",           -- same, raw
+    "plughw:0,0",      -- direct hardware (only if alsaloop is killed)
+    "hw:0,0",
+    "default",
+}
+local ALSA_LATENCY_US = 1000000  -- 1.0s. Bigger buffer = survives e-ink full-flash
+-- blockages (~0.5s) without underrunning. Audiobook latency is irrelevant, so
+-- favor resilience over responsiveness. (Was 500000 = 0.5s; flash caused pause.)
 
 ------------------------------------------------------------------------
 -- Obtain the FFI module + lib handle (guarded). Returns (ffi, lib) or (nil, nil).
@@ -148,10 +170,11 @@ function audio_device.create_decoder(path)
         local pkt = lib.av_packet_alloc()
         local frame = lib.av_frame_alloc()
 
-        -- Per-frame S16 output buffer: at most nb_samples*channels int16 samples.
-        -- AAC frame_size is typically 1024; allow 2x headroom for resample growth.
-        local max_samples = (in_channels or 2) * 4096
-        local out_buf = ffi.new("int16_t[?]", max_samples)
+        -- Per-frame S16 output buffer. out_count is in FRAMES (samples/channel)
+        -- per swr_convert's contract, so the buffer must hold frames*channels*2
+        -- bytes. AAC frame_size ~1024; 4096 frames headroom covers resample growth.
+        local max_frames = 4096
+        local out_buf = ffi.new("int16_t[?]", max_frames * (in_channels or 2) * 2)
         local out_ptrs = ffi.new("uint8_t*[1]")
         out_ptrs[0] = ffi.cast("uint8_t*", out_buf)
         local in_ptrs = ffi.new("const uint8_t*[2]")
@@ -167,10 +190,11 @@ function audio_device.create_decoder(path)
             _out_buf = out_buf,
             _out_ptrs = out_ptrs,
             _in_ptrs = in_ptrs,
-            _max_samples = max_samples,
+            _max_frames = max_frames,
             _time_base = time_base,
             _channels = in_channels,  -- read_frame uses this for FLTP plane count
             _sample_rate = in_sample_rate,  -- ALSA sink needs this
+            _samples_decoded = 0,  -- sample-count position tracking (pts offset is wrong)
             _closed = false,
         }
         return d_table
@@ -227,18 +251,36 @@ function audio_device.create_decoder(path)
                     else
                         self._in_ptrs[1] = self._in_ptrs[0]
                     end
-                    local out_count = self._max_samples
+                    local out_count = self._max_frames
                     local nsamp = lib.swr_convert(self._swr, self._out_ptrs, out_count,
                                                   self._in_ptrs, nb)
                     -- Read PTS BEFORE av_frame_unref (unref resets frame fields).
+                    -- Primary: try frame.pts (accurate, handles seeking natively).
+                    -- AVFrame.pts offset is unconfirmed (probe showed offsetof=160
+                    -- vs commented 192), so pts reads as 0 for every frame.
                     local pts_ms = 0
                     if frame.pts ~= AV_NOPTS_VALUE then
                         local pts = tonumber(frame.pts) or 0
-                        pts_ms = time_math.to_ms(pts, self._time_base)
+                        if pts > 0 then  -- only trust non-zero pts
+                            pts_ms = time_math.to_ms(pts, self._time_base)
+                        end
+                    end
+                    -- Fallback: sample-count accumulation. Depends only on
+                    -- nb_samples@112 + sample_rate (both verified on-device) →
+                    -- reliable monotonic position for forward playback.
+                    if pts_ms == 0 then
+                        pts_ms = math.floor(self._samples_decoded * 1000 /
+                            (self._sample_rate or 22050))
                     end
                     lib.av_frame_unref(frame)
                     if nsamp and nsamp > 0 then
-                        local byte_len = tonumber(nsamp) * 2  -- S16 = 2 bytes/sample
+                        -- Interleaved S16: nsamp is FRAMES (samples/channel)
+                        -- from swr_convert; byte length = frames * channels * 2.
+                        local channels = self._channels or 2
+                        local byte_len = tonumber(nsamp) * channels * 2
+                        -- Accumulate output samples for position tracking.
+                        -- Done AFTER computing pts_ms (pts = start of frame).
+                        self._samples_decoded = self._samples_decoded + tonumber(nsamp)
                         local pcm = ffi.string(self._out_ptrs[0], byte_len)
                         return { pcm = pcm, pts_ms = pts_ms }
                     end
@@ -333,6 +375,7 @@ function audio_device.create_alsa_sink(opts)
         _channels = channels,
     }
 
+
     -- Open the ALSA device lazily on first write so a sink can be created before
     -- the codec params are finalized. Tries the proven device list in order.
     local function open_pcm()
@@ -341,17 +384,22 @@ function audio_device.create_alsa_sink(opts)
             for _, devname in ipairs(ALSA_DEVICES) do
                 local pcm_ptr = ffi.new("snd_pcm_t*[1]")
                 local ret = lib.snd_pcm_open(pcm_ptr, devname, SND_PCM_STREAM_PLAYBACK, 0)
-                if ret >= 0 then
+                if ret < 0 then
+                    local errstr = lib.snd_strerror and ffi.string(lib.snd_strerror(ret)) or tostring(ret)
+                    logger.warn("[absaudio] ALSA open('%s') failed: %s", devname, errstr)
+                else
                     local pcm = pcm_ptr[0]
                     ret = lib.snd_pcm_set_params(pcm,
                         SND_PCM_FORMAT_S16_LE, SND_PCM_ACCESS_RW_INTERLEAVED,
                         sink._channels, sink._sample_rate, 1, ALSA_LATENCY_US)
                     if ret < 0 then
+                        logger.warn("[absaudio] ALSA set_params('%s') failed: %d", devname, ret)
                         lib.snd_pcm_close(pcm)
                     else
                         sink._pcm = pcm
                         sink._device = devname
                         sink._opened = true
+                        logger.info("[absaudio] ALSA opened '%s' (ch=%d rate=%d)", devname, sink._channels, sink._sample_rate)
                         return
                     end
                 end
@@ -359,6 +407,7 @@ function audio_device.create_alsa_sink(opts)
         end)
         if not ok then
             sink._failed = true
+            logger.warn("[absaudio] open_pcm pcall threw: %s", tostring(err))
             return false, err
         end
         if not sink._opened then
@@ -375,21 +424,56 @@ function audio_device.create_alsa_sink(opts)
 
     --------------------------------------------------------------------
     -- sink.write(data_string, n)  -- called by output_pump
-    -- n is the byte count; samples = n / 2 (S16). Idempotent on close.
+    -- n is the byte count; frames = n / (channels*2) (S16). Idempotent on close.
     --------------------------------------------------------------------
     function sink.write(data, n)
-        if sink._failed then return end
-        if not sink._opened then
-            local ok_open = open_pcm()
-            if not ok_open then return end
-        end
+        if not sink._opened and not sink._failed then sink.open() end
+        if not sink._pcm or sink._failed then return end
         local pcm = sink._pcm
-        if not pcm then return end
-        local nsamples = math.floor((n or #data) / 2)
-        if nsamples <= 0 then return end
-        pcall(function()
-            lib.snd_pcm_writei(pcm, data, nsamples)
-        end)
+        -- n is byte count; snd_pcm_writei wants FRAMES (samples/channel) =
+        -- bytes / (channels * 2). Dividing by 2 (mono math) made ALSA read 2x
+        -- the buffer for stereo → scratchy audio (fixed).
+        local channels = sink._channels or 2
+        local frames = math.floor((n or #data) / (channels * 2))
+        if frames <= 0 then return end
+        -- Write with ERROR RECOVERY. Two recoverable errors:
+        --   -EPIPE (-32): underrun — stream stuck; prepare() to reset.
+        --   -ESTRPIPE (-86): stream suspended (Loopback bridge idle/system
+        --     suspend). Recovery: snd_pcm_resume() first (clean), fall back
+        --     to snd_pcm_prepare() if not supported (-ENOSYS).
+        -- NOTE: ESTRPIPE is errno 86 on Linux, NOT 77 (the original -77
+        -- check never matched, causing the Loopback device's suspend at ~29s
+        -- to hit FATAL-giveup and kill playback permanently).
+        for attempt = 1, 3 do
+            local wret
+            local ok = pcall(function()
+                wret = tonumber(lib.snd_pcm_writei(pcm, data, frames)) or -999
+            end)
+            if not ok then return end
+            if wret >= 0 then return end  -- success
+            if wret == -11 then
+                -- EAGAIN: retry without recovery
+            elseif wret == -86 then
+                -- ESTRPIPE: try resume first, fall back to prepare
+                local rret = -999
+                if lib.snd_pcm_resume then
+                    pcall(function() rret = tonumber(lib.snd_pcm_resume(pcm)) or -999 end)
+                end
+                if rret < 0 then
+                    -- resume not supported; fall back to prepare
+                    local pret = -999
+                    pcall(function() pret = tonumber(lib.snd_pcm_prepare(pcm)) or -999 end)
+                    if pret < 0 then return end
+                end
+            elseif wret == -32 then
+                -- EPIPE: underrun recovery
+                local pret = -999
+                pcall(function() pret = tonumber(lib.snd_pcm_prepare(pcm)) or -999 end)
+                if pret < 0 then return end
+            else
+                return  -- unrecoverable error
+            end
+        end
     end
 
     function sink.close()
